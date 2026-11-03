@@ -700,6 +700,59 @@ wheels = [
 ]
 
 [[package]]
+name = "drone-image-object-detection"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "faster-coco-eval" },
+    { name = "ipykernel" },
+    { name = "jupyterlab" },
+    { name = "polars" },
+    { name = "pycocotools" },
+    { name = "python-decouple" },
+    { name = "torch" },
+    { name = "torchvision" },
+    { name = "tqdm" },
+    { name = "ultralytics" },
+    { name = "wandb" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "black" },
+    { name = "flake8" },
+    { name = "isort" },
+    { name = "pre-commit" },
+    { name = "pytest" },
+    { name = "ty" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "faster-coco-eval", specifier = ">=1.8.0" },
+    { name = "ipykernel", specifier = ">=7.4.0" },
+    { name = "jupyterlab", specifier = ">=4.6.5" },
+    { name = "polars", specifier = ">=2.1.0" },
+    { name = "pycocotools", specifier = ">=2.0.11" },
+    { name = "python-decouple", specifier = ">=3.8" },
+    { name = "torch", specifier = ">=2.11.0", index = "https://download.pytorch.org/whl/cu128" },
+    { name = "torchvision", specifier = ">=0.26.0", index = "https://download.pytorch.org/whl/cu128" },
+    { name = "tqdm", specifier = ">=4.70.1" },
+    { name = "ultralytics", specifier = ">=8.4.199" },
+    { name = "wandb", specifier = ">=0.31.0" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "black", specifier = ">=26.10.1" },
+    { name = "flake8", specifier = ">=7.5.0" },
+    { name = "isort", specifier = ">=9.0.2" },
+    { name = "pre-commit", specifier = ">=4.7.0" },
+    { name = "pytest", specifier = ">=9.2.0" },
+    { name = "ty", specifier = ">=0.0.96" },
+]
+
+[[package]]
 name = "executing"
 version = "2.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1958,59 +2011,6 @@ source = { registry = "https://pypi.org/simple" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/10/c0/1b303feea90d296f6176f32a2a70b5ef230f9bdeb3a72bddb0dc922dc137/nvidia_nvtx_cu12-12.8.90-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:d7ad891da111ebafbf7e015d34879f7112832fc239ff0d7d776b6cb685274615", size = 91161, upload-time = "2025-03-07T01:42:23.922Z" },
     { url = "https://files.pythonhosted.org/packages/a2/eb/86626c1bbc2edb86323022371c39aa48df6fd8b0a1647bc274577f72e90b/nvidia_nvtx_cu12-12.8.90-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:5b17e2001cc0d751a5bc2c6ec6d26ad95913324a4adb86788c944f8ce9ba441f", size = 89954, upload-time = "2025-03-07T01:42:44.131Z" },
-]
-
-[[package]]
-name = "object-detection-hw2"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "faster-coco-eval" },
-    { name = "ipykernel" },
-    { name = "jupyterlab" },
-    { name = "polars" },
-    { name = "pycocotools" },
-    { name = "python-decouple" },
-    { name = "torch" },
-    { name = "torchvision" },
-    { name = "tqdm" },
-    { name = "ultralytics" },
-    { name = "wandb" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "black" },
-    { name = "flake8" },
-    { name = "isort" },
-    { name = "pre-commit" },
-    { name = "pytest" },
-    { name = "ty" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "faster-coco-eval", specifier = ">=1.8.0" },
-    { name = "ipykernel", specifier = ">=7.4.0" },
-    { name = "jupyterlab", specifier = ">=4.6.5" },
-    { name = "polars", specifier = ">=2.1.0" },
-    { name = "pycocotools", specifier = ">=2.0.11" },
-    { name = "python-decouple", specifier = ">=3.8" },
-    { name = "torch", specifier = ">=2.11.0", index = "https://download.pytorch.org/whl/cu128" },
-    { name = "torchvision", specifier = ">=0.26.0", index = "https://download.pytorch.org/whl/cu128" },
-    { name = "tqdm", specifier = ">=4.70.1" },
-    { name = "ultralytics", specifier = ">=8.4.199" },
-    { name = "wandb", specifier = ">=0.31.0" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "black", specifier = ">=26.10.1" },
-    { name = "flake8", specifier = ">=7.5.0" },
-    { name = "isort", specifier = ">=9.0.2" },
-    { name = "pre-commit", specifier = ">=4.7.0" },
-    { name = "pytest", specifier = ">=9.2.0" },
-    { name = "ty", specifier = ">=0.0.96" },
 ]
 
 [[package]]

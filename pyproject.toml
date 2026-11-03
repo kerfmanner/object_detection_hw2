@@ -1,5 +1,5 @@
 [project]
-name = "object-detection-hw2"
+name = "drone-image-object-detection"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"

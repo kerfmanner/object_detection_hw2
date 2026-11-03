@@ -1,0 +1,3 @@
+[wandb]
+entity = "konovalov-pn"
+project = "visdrone-hw2"
