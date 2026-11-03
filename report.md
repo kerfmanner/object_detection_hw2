@@ -1,8 +1,8 @@
 ---
-title: Homework 1 -- Your Title Here
-author: John Doe
+title: Multiple Object Video Detection | HW2
+author: Luka Konovalov
 course: Artificial Intelligence · UCU
-date: 2026-10-12
+date: 2026-11-3
 ---
 
 ## Introduction
