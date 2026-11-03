@@ -1,0 +1,48 @@
+[project]
+name = "object-detection-hw2"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "kerfmanner", email = "konovluka@email.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "faster-coco-eval>=1.8.0",
+    "ipykernel>=7.4.0",
+    "jupyterlab>=4.6.5",
+    "polars>=2.1.0",
+    "pycocotools>=2.0.11",
+    "python-decouple>=3.8",
+    "torch>=2.11.0",
+    "torchvision>=0.26.0",
+    "tqdm>=4.70.1",
+    "ultralytics>=8.4.199",
+    "wandb>=0.31.0",
+]
+
+[project.scripts]
+object-detection-hw2 = "object_detection_hw2:main"
+
+[build-system]
+requires = ["uv_build>=0.13.6,<0.14.0"]
+build-backend = "uv_build"
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu128" }]
+torchvision = [{ index = "pytorch-cu128" }]
+
+[dependency-groups]
+dev = [
+    "black>=26.10.1",
+    "flake8>=7.5.0",
+    "isort>=9.0.2",
+    "pre-commit>=4.7.0",
+    "pytest>=9.2.0",
+    "ty>=0.0.96",
+]
