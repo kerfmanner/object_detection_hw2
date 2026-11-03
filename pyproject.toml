@@ -21,12 +21,8 @@ dependencies = [
     "wandb>=0.31.0",
 ]
 
-[project.scripts]
-object-detection-hw2 = "object_detection_hw2:main"
-
-[build-system]
-requires = ["uv_build>=0.13.6,<0.14.0"]
-build-backend = "uv_build"
+[tool.uv]
+package = false
 
 [[tool.uv.index]]
 name = "pytorch-cu128"

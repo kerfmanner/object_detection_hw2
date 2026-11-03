@@ -702,7 +702,7 @@ wheels = [
 [[package]]
 name = "drone-image-object-detection"
 version = "0.1.0"
-source = { editable = "." }
+source = { virtual = "." }
 dependencies = [
     { name = "faster-coco-eval" },
     { name = "ipykernel" },
