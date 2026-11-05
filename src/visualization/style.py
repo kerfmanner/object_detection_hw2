@@ -1,0 +1,29 @@
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+from src.data.classes import CLASS_NAMES
+
+# Hex values of the seaborn "colorblind" palette:
+# https://seaborn.pydata.org/tutorial/color_palettes.html
+CLASS_COLORS = dict(
+    zip(
+        CLASS_NAMES,
+        ("#0173b2", "#de8f05", "#029e73", "#d55e00", "#cc78bc", "#ca9161", "#fbafe4", "#949494"),
+        strict=True,
+    )
+)
+GT_COLOR = "#ece133"
+PREDICTION_COLOR = "#56b4e9"
+IGNORED_REGION_COLOR = "#000000"
+IGNORED_REGION_ALPHA = 0.45
+
+
+def set_plot_theme() -> None:
+    """Apply the shared seaborn theme and class palette to all following matplotlib figures."""
+    sns.set_theme(context="notebook", style="whitegrid", palette=list(CLASS_COLORS.values()))
+    plt.rcParams.update({"figure.dpi": 100, "savefig.dpi": 100, "savefig.bbox": "tight"})
+
+
+SPLIT_COLORS = {"train": "#3a5f9e", "val": "#d9822b"}
+TEST_COLOR = "#4c9a6a"
+OCCLUSION_COLORS = {"none": "#c6dbef", "partial": "#6baed6", "heavy": "#08519c"}
