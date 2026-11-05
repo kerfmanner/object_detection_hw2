@@ -6,7 +6,7 @@
 
 - Task: object detection on drone video frames (VisDrone2019-VID, provided via Kaggle). Predict boxes, classes, and scores for every frame of 48 unlabelled test clips. Solo project.
 - Classes (8, 0-based): 0 person, 1 bicycle, 2 car, 3 van, 4 truck, 5 tricycle, 6 bus, 7 motor. COCO `category_id` in `annotations_coco.json` is 1-based.
-- Data: train 56 clips / 24,454 frames, val 7 clips / 2,593 frames (adopted split, see Data and Experiments), test 48 clips / 3,811 frames. Test frames 680×382 to 1920×1080; train and val may include frames up to 3840×2160. Objects are small (often 10–30 px), dense, often occluded. Ignored regions (crowds, dense parking, VisDrone "others") are "don't care".
+- Data: train 56 clips / 24,454 frames, val 7 clips / 2,593 frames (adopted split, see Data and Experiments), test 48 clips / 3,811 frames. Test frames 680×382 to 1920×1080; train and val may include frames up to 3840×2160. Objects are small: median √area 45.7 px (train), 24.8% below 32 px, 5th percentile 19.8 px, dense, often occluded. Ignored regions (crowds, dense parking, VisDrone "others") are "don't care".
 - Metrics: COCO mAP@[.5:.95], AP50, AP_small, inference speed on validation. Leaderboard metric: not stated; most likely COCO mAP@[.5:.95] (public LB scores 0.09–0.35 as of 2026-11-03).
 - Submission: `image_id,PredictionString` with `class score x y w h` in original pixels, top-left corner, at most 500 boxes per image.
 - Required detector families: two-stage anchor-based, one-stage anchor-based, one-stage anchor-free, query-based, plus a final pipeline.
@@ -207,19 +207,27 @@ Tests run on CPU against the smoke subset and never need a GPU or the full datas
     - Validation: every 5th frame for per-epoch monitoring, all frames for reported metrics.
 2. Ignored regions:
     - Evaluation: passed as `iscrowd=1`.
-    - Training: filled with the dataset mean color before augmentation, except pixels inside labelled boxes. Masking versus no masking is a final-pipeline experiment.
+    - Training: baselines use unmodified frames. Filling ignored regions with the train mean colour (except pixels inside labelled boxes) is a final-pipeline experiment.
 3. Seed 42 for new experiments. Never change existing seeds, splits, or folds unless the task is to change them.
 4. Tune only on validation. The public LB is a final check for selected models, not a tuning signal. Test images may be described (metadata, pixel statistics) but never used to fit or choose anything: no normalization statistics, pseudo-labels, or augmentation choices justified by test.
 5. Validation has 7 clips: treat small gains as noise until they repeat with another seed.
 6. Inference keeps up to 500 detections per frame in every family (torchvision `box_detections_per_img` / `detections_per_img`, YOLO `max_det`; RT-DETR is limited by its query count). The shared evaluator uses `maxDets` 500 to match the leaderboard limit. NMS IoU stays at 0.5 or above and is per-class.
-7. Change one factor at a time against the family baseline. Baselines use COCO-pretrained weights and deliberately simple training settings: for torchvision, SGD with momentum 0.9, constant LR, no warmup, no augmentation; for Ultralytics and Hugging Face, framework defaults. All families share the same input resolution, frame step, and budget. Resolution: torchvision `min_size` 1024, `max_size` 1824 (every frame keeps its shorter side at 1024 px); YOLO `imgsz` 1824, which gives the same object scale because YOLO resizes the longer side to `imgsz`. YOLO trains on square letterboxed inputs, so its batch size may be smaller; record the effective batch size. YOLO `imgsz` 1280 is a later resolution experiment.
+7. Change one factor at a time against the family baseline. Baselines use COCO-pretrained weights and deliberately simple training settings: for torchvision, SGD with momentum 0.9, constant LR, no warmup, no augmentation; for Ultralytics and Hugging Face, framework defaults. All families share the same input resolution, frame step, and budget. Resolution: torchvision `min_size` 1024, `max_size` 1824 (every frame about 1024 px (torchvision rounds some sizes to 1023); YOLO `imgsz` 1824, which gives the same object scale because YOLO resizes the longer side to `imgsz`. YOLO trains on square letterboxed inputs, so its batch size may be smaller; record the effective batch size. YOLO `imgsz` 1280 is a later resolution experiment.
     - Two-stage: torchvision Faster R-CNN ResNet50-FPN v2.
     - One-stage anchor-based: torchvision RetinaNet ResNet50-FPN v2.
     - Anchor-free: YOLO11.
     - Query-based: Hugging Face `transformers` RT-DETRv2, COCO-pretrained (TODO: exact checkpoint, e.g. R50 backbone).
     - The tuned two-stage model is the reference for later families.
 8. Report only metrics from the shared evaluator in `src/evaluation/`. Framework metrics (e.g. Ultralytics `val`) are for monitoring only.
-9. `experiments/results.csv` has one row per run: experiment, config path, seed, commit, machine (`pc` / `kaggle`), mAP, AP50, AP75, AP_small, AP_medium, AP_large, ms/image, public LB if submitted, notes. It is the source of truth for reported numbers. Each run also logs to W&B under the same name: full config, curves, and a few validation frames with GT and predicted boxes.
+9. Experiment logging:
+    - Every completed run is logged, including runs that did not improve; the report grades unsuccessful attempts too. Crashed or aborted runs are not logged; note them in the run's W&B entry.
+    - The run directory holds the resolved `config.toml`, `metrics.json`, and checkpoints. `metrics.json` contains all evaluator outputs (overall, per size, per class, ≤ 1920 px subset), the per-epoch history, best epoch, training time, effective batch size, frame step, commit hash, a dirty flag if the working tree had uncommitted changes, and the machine.
+    - `best.pt` is selected by per-epoch monitoring mAP (val at step 5); reported metrics are then computed on all val frames.
+    - `experiments/results.csv` has one row per run: experiment, config path, run directory, seed, commit, dirty flag, machine (`pc` / `kaggle`), frame step, epochs, effective batch size, GPU hours, mAP, AP50, AP75, AP_small, AP_medium, AP_large, mAP and AP_small on ≤ 1920 px frames, ms/image, public LB if submitted, W&B run URL, notes.
+    - `notes` states what changed versus the baseline and the hypothesis being tested, in one line.
+    - Rows are written only from `metrics.json` (Hard Rule 5); `src.evaluate` prints the row, and I append it.
+    - Each run also logs to W&B under the experiment name: full config, curves, and a few validation frames with GT and predicted boxes.
+    - `results.csv` is the source of truth for reported numbers.
 10. Datasets read frames from disk lazily; never load the whole dataset into memory.
 11. Prefer Polars expressions over Python loops for tabular work.
 
