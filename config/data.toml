@@ -4,6 +4,14 @@ train_clip = "uav0000013_00000_v"  # first train clip by name
 val_clip = "uav0000086_00000_v"  # first validation clip by name
 frame_ids = [1, 2, 3, 4, 5, 6, 7, 8]  # 1-based frame numbers taken from each clip
 
+[frame_steps]
+# Frame subsampling: keep frames 1, 1 + step, 1 + 2 * step, ... of every clip (1 keeps all).
+# Chosen in 01_eda.ipynb section 9.
+train_tuning = 5  # train frames for tuning experiments (4,919 frames)
+train_final = 2  # train frames for final models (12,240 frames)
+val_monitoring = 5  # val frames for per-epoch monitoring and best.pt selection (520 frames)
+val_reporting = 1  # val frames for reported metrics (2,593 frames)
+
 [splits]
 # Clips per split. Provided split with one swap decided in 01_eda.ipynb section 11:
 # uav0000268_05773_v moved from val to train, uav0000263_03289_v from train to val.

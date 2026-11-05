@@ -4,6 +4,48 @@ import polars as pl
 from src.data.annotations import BOX_COLUMNS
 
 
+def convert_xywh_to_xyxy(boxes: np.ndarray) -> np.ndarray:
+    """Convert pixel boxes from top-left corner and size to corner coordinates.
+
+    Args:
+        boxes: Array of shape (n, 4) with `x, y, w, h` in px, top-left corner.
+
+    Returns:
+        Array of shape (n, 4) with `x1, y1, x2, y2` in px.
+    """
+    return np.concatenate([boxes[:, :2], boxes[:, :2] + boxes[:, 2:]], axis=1)
+
+
+def convert_xywh_to_yolo(boxes: np.ndarray, width: int, height: int) -> np.ndarray:
+    """Convert pixel boxes to YOLO boxes normalized by the frame size.
+
+    Args:
+        boxes: Array of shape (n, 4) with `x, y, w, h` in px, top-left corner.
+        width: Frame width in px.
+        height: Frame height in px.
+
+    Returns:
+        Array of shape (n, 4) with `x_center, y_center, w, h` in [0, 1].
+    """
+    scale = np.array([width, height, width, height])
+    return np.concatenate([boxes[:, :2] + boxes[:, 2:] / 2, boxes[:, 2:]], axis=1) / scale
+
+
+def convert_yolo_to_xywh(boxes: np.ndarray, width: int, height: int) -> np.ndarray:
+    """Convert YOLO boxes normalized by the frame size to pixel boxes.
+
+    Args:
+        boxes: Array of shape (n, 4) with `x_center, y_center, w, h` in [0, 1].
+        width: Frame width in px.
+        height: Frame height in px.
+
+    Returns:
+        Array of shape (n, 4) with `x, y, w, h` in px, top-left corner.
+    """
+    pixel_boxes = boxes * np.array([width, height, width, height])
+    return np.concatenate([pixel_boxes[:, :2] - pixel_boxes[:, 2:] / 2, pixel_boxes[:, 2:]], axis=1)
+
+
 def compute_iou_matrix(boxes_a: np.ndarray, boxes_b: np.ndarray) -> np.ndarray:
     """Compute the IoU of every pair of boxes in two sets.
 
