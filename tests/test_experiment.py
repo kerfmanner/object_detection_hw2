@@ -129,9 +129,12 @@ def test_smoke_wandb_run_is_disabled_and_named_after_the_experiment(family_dir: 
     run.finish()
 
 
-def test_unknown_family_raises_a_clear_error(family_dir: Path) -> None:
+def test_unknown_family_raises_a_clear_error(tmp_path: Path) -> None:
+    family_dir = tmp_path / "config" / "unknown_family"
+    family_dir.mkdir(parents=True)
+    (family_dir / "baseline.toml").write_text(BASELINE_TOML)
     config = load_experiment_config(family_dir / "baseline.toml")
-    with pytest.raises(ValueError, match="No model builder registered for family 'faster_rcnn'"):
+    with pytest.raises(ValueError, match="No model builder registered for family 'unknown_family'"):
         build_model(config)
 
 

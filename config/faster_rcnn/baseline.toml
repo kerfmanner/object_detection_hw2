@@ -1,0 +1,51 @@
+# Faster R-CNN baseline: COCO-pretrained ResNet50-FPN v2, SGD at a constant LR without warmup or augmentation, torchvision default RPN and RoI heads
+arch = "fasterrcnn_resnet50_fpn_v2"  # torchvision detector builder; the only supported value
+init = "coco"  # pretrained weights: coco (torchvision FasterRCNN_ResNet50_FPN_V2_Weights.COCO_V1), the only supported value; the box predictor is new
+trainable_backbone_layers = 3  # trainable ResNet stages counted from the last, 0 to 5; earlier stages are frozen (torchvision default 3)
+train_frames = "train_tuning"  # [frame_steps] key in config/data.toml: train_tuning (step 5) or train_final (step 2)
+min_size = 1024  # shorter frame side after resizing, in px; every frame becomes about 1024 x 1820 px
+max_size = 1824  # upper bound of the longer side after resizing, in px; set explicitly because torchvision's default 1333 would override min_size on 16:9 frames
+epochs = 0  # TODO: set after the timing run to floor(5400 / epoch_seconds), the 1.5 GPU hour baseline budget; epoch_seconds includes monitoring. Training epochs, integer of at least 1
+batch_size = 0  # TODO: set after the timing run; suggested 4 if its gpu_memory_gb stays below about 11, else 2 with grad_accum 2. Frames per forward pass, integer of at least 1
+grad_accum = 1  # batches whose gradients are summed per optimizer step, integer of at least 1; effective batch size = batch_size * grad_accum
+num_workers = 4  # DataLoader worker processes decoding frames, integer of at least 0
+lr = 0.0  # TODO: set after the timing run; suggested 0.005 for effective batch 4, the torchvision reference LR 0.02 at batch 16 scaled linearly (https://github.com/pytorch/vision/tree/main/references/detection, https://arxiv.org/abs/1706.02677). SGD learning rate, positive
+momentum = 0.9  # SGD momentum
+weight_decay = 0.0001  # SGD L2 weight decay on all trainable parameters (torchvision reference default)
+schedule = "constant"  # LR schedule: constant, the only supported value
+warmup_iters = 0  # LR warmup iterations: 0, the only supported value
+amp = true  # mixed precision training on CUDA: true or false; CPU always trains in float32; inference is float32
+seed = 42  # seed of the new box predictor, the shuffling order, and RPN and RoI sampling
+
+[rpn]
+# Region proposal network; all values are the torchvision defaults
+anchor_sizes = [[32], [64], [128], [256], [512]]  # anchor sizes in px (square root of the area), one list per FPN level P2 to P6 (strides 4 to 64)
+aspect_ratios = [[0.5, 1.0, 2.0], [0.5, 1.0, 2.0], [0.5, 1.0, 2.0], [0.5, 1.0, 2.0], [0.5, 1.0, 2.0]]  # anchor height / width ratios, one list per FPN level; anchors per location must stay 3 to reuse the COCO RPN head
+pre_nms_top_n_train = 2000  # highest-scoring anchors kept per FPN level before NMS, training
+pre_nms_top_n_test = 1000  # highest-scoring anchors kept per FPN level before NMS, inference
+post_nms_top_n_train = 2000  # proposals kept per image after NMS, training
+post_nms_top_n_test = 1000  # proposals kept per image after NMS, inference
+nms_thresh = 0.7  # IoU threshold of the proposal NMS
+fg_iou_thresh = 0.7  # anchors with IoU at least this with a GT box are positives
+bg_iou_thresh = 0.3  # anchors with IoU below this with every GT box are negatives
+batch_size_per_image = 256  # anchors sampled per image for the RPN loss
+positive_fraction = 0.5  # maximum fraction of positives among the sampled anchors
+score_thresh = 0.0  # minimum objectness probability of kept proposals
+
+[roi_heads]
+# Second stage training; all values are the torchvision defaults
+fg_iou_thresh = 0.5  # proposals with IoU at least this with a GT box are positives
+bg_iou_thresh = 0.5  # proposals with IoU below this with every GT box are background
+batch_size_per_image = 512  # proposals sampled per image for the box head loss
+positive_fraction = 0.25  # maximum fraction of positives among the sampled proposals
+
+[inference]
+score_thresh = 0.001  # minimum class score of kept detections, in [0, 1]; low so that AP integrates the full precision-recall curve (torchvision default 0.05)
+nms_thresh = 0.5  # per-class NMS IoU threshold of the final detections, at least 0.5
+detections_per_img = 500  # maximum detections per frame, at most 500 (torchvision default 100)
+warmup_images = 10  # untimed forward passes on the first frame before measuring ms/image
+
+[logging]
+log_interval = 50  # batches between W&B points of the training losses and LR
+sample_frames = 4  # monitoring val frames drawn with GT and predicted boxes to W&B after each epoch, evenly spaced
+sample_score_thresh = 0.3  # minimum score of the predicted boxes drawn on those frames

@@ -49,10 +49,10 @@ def training_calls(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
 
 
 def test_unregistered_family_fails_before_writing_anything(tmp_path: Path) -> None:
-    family_dir = tmp_path / "config" / "faster_rcnn"
+    family_dir = tmp_path / "config" / "unknown_family"
     family_dir.mkdir(parents=True)
     (family_dir / "baseline.toml").write_text(BASELINE_TOML)
-    with pytest.raises(ValueError, match="No model builder registered for family 'faster_rcnn'"):
+    with pytest.raises(ValueError, match="No model builder registered for family 'unknown_family'"):
         run_training(family_dir / "baseline.toml", tmp_path, tmp_path / "runs", is_smoke=False)
     assert not (tmp_path / "runs").exists()
 

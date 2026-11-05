@@ -17,14 +17,13 @@ from src.data.yolo_export import write_yolo_dataset
 from src.evaluate import DATA_CONFIG_PATH, METRICS_FILE
 from src.inference.frames import predict_frames
 from src.submission.writer import format_submission
-from src.training.experiment import REPO_ROOT, describe_run
+from src.training.experiment import REPO_ROOT, TRAIN_FRAME_STEPS, describe_run
 
 logger = logging.getLogger(__name__)
 
 DATASET_DIR = "yolo_data"
 ULTRALYTICS_DIR = "ultralytics"
 CHECKPOINT_FILES = ("best.pt", "last.pt")
-TRAIN_FRAME_STEPS = ("train_tuning", "train_final")
 AUTOBATCH = -1
 SMOKE_TRAIN_OPTIONS = {"epochs": 1, "device": "cpu", "workers": 0, "cache": False, "plots": False}
 SMOKE_IMGSZ = 320

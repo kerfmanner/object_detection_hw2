@@ -9,8 +9,8 @@ from ultralytics import YOLO
 from ultralytics.engine.results import Boxes, Results
 from ultralytics.utils.patches import imread
 
-from src.data.annotations import BOX_COLUMNS
 from src.data.classes import CLASS_NAMES
+from src.inference.detections import build_prediction_table
 
 
 def convert_yolo_boxes(boxes: Boxes) -> np.ndarray:
@@ -118,14 +118,5 @@ def predict_yolo_frames(
             torch.cuda.synchronize()
         seconds.append(time.perf_counter() - started)
         frame_detections.append(convert_yolo_boxes(boxes))
-    detections = np.concatenate(frame_detections)
-    frame_index = np.repeat(np.arange(len(file_paths)), [len(d) for d in frame_detections])
-    predictions = pl.DataFrame(
-        {
-            "image_id": images["image_id"].gather(frame_index),
-            "class_id": detections[:, 0].astype(np.int64),
-            "score": detections[:, 1],
-            **{column: detections[:, 2 + i] for i, column in enumerate(BOX_COLUMNS)},
-        }
-    )
+    predictions = build_prediction_table(images["image_id"], frame_detections)
     return predictions, 1000 * float(np.mean(seconds))

@@ -97,6 +97,21 @@ def find_densest_crop(
     return best_corner
 
 
+def add_class_legend(fig: Figure) -> None:
+    """Add a one-row legend of the class colors and the ignored-region shading below a figure.
+
+    Args:
+        fig: Figure whose bottom margin holds the legend.
+    """
+    handles = [
+        Patch(edgecolor=color, fill=False, label=name) for name, color in CLASS_COLORS.items()
+    ]
+    handles.append(
+        Patch(color=IGNORED_REGION_COLOR, alpha=IGNORED_REGION_ALPHA, label="ignored region")
+    )
+    fig.legend(handles=handles, ncol=9, loc="lower center", fontsize=8, frameon=False)
+
+
 def plot_frame_with_crop(
     image_path: Path,
     objects: pl.DataFrame,
@@ -135,13 +150,46 @@ def plot_frame_with_crop(
         ylim=(y0 + crop_size[1], y0),
         title=f"Crop {crop_size[0]} × {crop_size[1]} px at ({x0}, {y0})",
     )
-    handles = [
-        Patch(edgecolor=color, fill=False, label=name) for name, color in CLASS_COLORS.items()
-    ]
-    handles.append(
-        Patch(color=IGNORED_REGION_COLOR, alpha=IGNORED_REGION_ALPHA, label="ignored region")
+    add_class_legend(fig)
+    fig.suptitle(title)
+    fig.tight_layout(rect=(0, 0.06, 1, 1))
+    return fig
+
+
+def plot_ground_truth_and_predictions(
+    image_path: Path,
+    objects: pl.DataFrame,
+    ignored: pl.DataFrame,
+    predictions: pl.DataFrame,
+    title: str,
+) -> Figure:
+    """Plot a frame with its GT boxes next to the same frame with predicted boxes.
+
+    Both panels shade the ignored regions and color boxes by class.
+
+    Args:
+        image_path: Path of the frame image.
+        objects: GT objects of this frame with `class_id` and pixel box columns.
+        ignored: Ignored regions of this frame with pixel box columns.
+        predictions: Predictions to draw on this frame with `class_id` and pixel box columns.
+        title: Figure title.
+
+    Returns:
+        Figure with the GT panel on the left and the prediction panel on the right.
+    """
+    image = plt.imread(image_path)
+    fig, axes = plt.subplots(1, 2, figsize=(16, 5))
+    panels = (
+        (objects, f"Ground truth, {objects.height} boxes"),
+        (predictions, f"Predictions, {predictions.height} boxes"),
     )
-    fig.legend(handles=handles, ncol=9, loc="lower center", fontsize=8, frameon=False)
+    for ax, (boxes, panel_title) in zip(axes, panels, strict=True):
+        ax.imshow(image)
+        shade_ignored_regions(ax, ignored)
+        draw_class_boxes(ax, boxes, linewidth=0.8)
+        ax.set(xticks=[], yticks=[], title=panel_title)
+        ax.grid(False)
+    add_class_legend(fig)
     fig.suptitle(title)
     fig.tight_layout(rect=(0, 0.06, 1, 1))
     return fig

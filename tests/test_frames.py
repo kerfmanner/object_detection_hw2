@@ -8,6 +8,7 @@ from src.visualization.frames import (
     draw_class_boxes,
     find_densest_crop,
     plot_frame_with_crop,
+    plot_ground_truth_and_predictions,
     render_figure_as_jpeg,
     shade_ignored_regions,
 )
@@ -53,4 +54,23 @@ def test_plot_frame_with_crop_renders_smoke_frame_as_jpeg(
         (image["width"] // 4, image["height"] // 4),
         "smoke frame",
     )
+    assert render_figure_as_jpeg(fig, 80)[:2] == b"\xff\xd8"
+
+
+def test_ground_truth_and_prediction_panels_count_their_boxes(
+    smoke_annotations: AnnotationTables,
+) -> None:
+    image = smoke_annotations.images.row(0, named=True)
+    keys = (pl.col("split") == image["split"]) & (pl.col("image_id") == image["image_id"])
+    objects = smoke_annotations.objects.filter(keys)
+    fig = plot_ground_truth_and_predictions(
+        Path(image["file_path"]),
+        objects,
+        smoke_annotations.ignored.filter(keys),
+        make_boxes([(0, 10, 10, 20, 20), (7, 40, 40, 20, 20)]),
+        "smoke frame",
+    )
+    ground_truth_ax, prediction_ax = fig.axes
+    assert ground_truth_ax.get_title() == f"Ground truth, {objects.height} boxes"
+    assert prediction_ax.get_title() == "Predictions, 2 boxes"
     assert render_figure_as_jpeg(fig, 80)[:2] == b"\xff\xd8"

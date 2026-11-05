@@ -4,11 +4,15 @@ from pathlib import Path
 import torch
 import wandb
 
+from src.training.torchvision_loop import train_torchvision_detector
 from src.training.yolo import train_yolo
 
 FamilyTrainer = Callable[..., None]
 
-FAMILY_TRAINERS: dict[str, FamilyTrainer] = {"yolo": train_yolo}
+FAMILY_TRAINERS: dict[str, FamilyTrainer] = {
+    "faster_rcnn": train_torchvision_detector,
+    "yolo": train_yolo,
+}
 
 
 def train_detector(

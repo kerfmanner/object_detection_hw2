@@ -123,7 +123,7 @@ Course citation: Oleh Basystyi. Multiple Object Video Detection | HW2 | UCU AI 2
 
 | Resource | Description | Used in |
 | --- | --- | --- |
-| [TorchVision detection tutorial](https://docs.pytorch.org/tutorials/intermediate/torchvision_tutorial.html) and [reference scripts](https://github.com/pytorch/vision/tree/main/references/detection) | Show how to fine-tune Faster R-CNN, RetinaNet, FCOS and SSD on a custom dataset. The lowest-friction way to train anchor-based and FCOS models with full control over the code. | |
+| [TorchVision detection tutorial](https://docs.pytorch.org/tutorials/intermediate/torchvision_tutorial.html) and [reference scripts](https://github.com/pytorch/vision/tree/main/references/detection) | Show how to fine-tune Faster R-CNN, RetinaNet, FCOS and SSD on a custom dataset. The lowest-friction way to train anchor-based and FCOS models with full control over the code. | `src/models/faster_rcnn.py`; `src/models/torchvision_labels.py`; `config/faster_rcnn/baseline.toml` |
 | [Detectron2](https://github.com/facebookresearch/detectron2) | Meta's detection library with configurable two-stage and RetinaNet models. Good if you want fine-grained control over RPN and RoI head settings. | |
 | [MMDetection](https://github.com/open-mmlab/mmdetection) | The largest model zoo (Cascade R-CNN, ATSS, GFL, DINO and many more) under one config system. Pin library versions, since installation on recent PyTorch can be difficult. | |
 | [Ultralytics](https://docs.ultralytics.com/) | Easy training of YOLO models and RT-DETR with a shared API, free under the AGPL-3.0 license. Convenient for keeping the training protocol identical across models. | `src/models/yolo.py`; `src/training/yolo.py`; `src/inference/yolo.py` |
@@ -140,3 +140,4 @@ Sources outside the course list. Add a row whenever one is cited.
 | [VisDrone toolkit README](https://github.com/VisDrone/VisDrone2018-VID-toolkit) | Meaning of the occlusion and truncation levels. | `01_eda.ipynb` §8 |
 | [seaborn color palettes](https://seaborn.pydata.org/tutorial/color_palettes.html) | Source of the colorblind-safe class colors. | `src/visualization/style.py` |
 | [torchvision detection transform](https://github.com/pytorch/vision/blob/main/torchvision/models/detection/transform.py) | `GeneralizedRCNNTransform` resize rule (`min_size`, `max_size`). | `src/data/statistics.py`; `01_eda.ipynb` §5.4 |
+| [Goyal et al., Accurate, Large Minibatch SGD](https://arxiv.org/abs/1706.02677) | Linear scaling rule: scale the learning rate with the batch size. | `config/faster_rcnn/baseline.toml` (suggested `lr`) |

@@ -4,11 +4,15 @@ from pathlib import Path
 import polars as pl
 import torch
 
+from src.inference.torchvision_detectors import predict_torchvision_frames
 from src.inference.yolo import predict_yolo_frames
 
 FramePredictor = Callable[..., tuple[pl.DataFrame, float]]
 
-FAMILY_PREDICTORS: dict[str, FramePredictor] = {"yolo": predict_yolo_frames}
+FAMILY_PREDICTORS: dict[str, FramePredictor] = {
+    "faster_rcnn": predict_torchvision_frames,
+    "yolo": predict_yolo_frames,
+}
 
 
 def predict_frames(
