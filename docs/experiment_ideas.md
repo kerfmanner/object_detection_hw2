@@ -33,10 +33,10 @@ Required:
 - Analyze at least three failure cases with plausible causes.
 
 Ideas:
-- **Anchors, step 1** (3 per location, COCO RPN head weights still load): sizes `((16,), (32,), (64,), (128,), (256,))`, aspect ratios `(0.5, 1, 2)`. Best grid IoU < 0.5: 2.0% of boxes (default 10.5%), 3.6% of small boxes (default 37.0%); < 0.7 gets worse, 68.0% vs 56.8% [§13.3].
-- **Anchors, step 2** (6 per location; RPN head output shape changes, so its COCO weights cannot load, which is a second change to report): sizes `((16, 24), (32, 48), (64, 96), (128, 192), (256, 384))`. Below 0.5: 0.8% of boxes, 2.8% of small; below 0.7: 28.5%. Review RPN pre- and post-NMS top-n in the same experiment (about 700k anchors per image at P2).
+- **Anchors, step 1** (3 per location, COCO RPN head weights still load): sizes `((16,), (32,), (64,), (128,), (256,))`, aspect ratios `(0.5, 1, 2)`. Best grid IoU < 0.5: 2.0% of boxes (default 10.5%), 3.6% of small boxes (default 37.0%); < 0.7 gets worse, 68.0% vs 56.8% [§13.3]. Proposed-anchor numbers computed during EDA, not in a notebook; to be recomputed in `02_two_stage.ipynb`.
+- **Anchors, step 2** (6 per location; RPN head output shape changes, so its COCO weights cannot load, which is a second change to report): sizes `((16, 24), (32, 48), (64, 96), (128, 192), (256, 384))`. Below 0.5: 0.8% of boxes, 2.8% of small; below 0.7: 28.5%. Review RPN pre- and post-NMS top-n in the same experiment (about 700k anchors per image at P2). Proposed-anchor numbers computed during EDA, not in a notebook; to be recomputed in `02_two_stage.ipynb`.
 - RPN proposal counts, RoI sampling ratio, GIoU box loss, cosine schedule with warmup.
-- Not worth it: aspect ratio 1.5 (at most 0.4 points at IoU 0.5).
+- Not worth it: aspect ratio 1.5 (at most 0.4 points at IoU 0.5). Proposed-anchor numbers computed during EDA, not in a notebook; to be recomputed in `02_two_stage.ipynb`.
 
 ## One-stage anchor-based (RetinaNet ResNet50-FPN v2)
 
@@ -47,7 +47,7 @@ Required:
 - Compare the initial and tuned models with the tuned two-stage detector.
 
 Ideas:
-- **Anchors**: base sizes 16 to 256, three scales per octave, aspect ratios `(0.5, 1, 2)`; still 9 per location, so the head loads COCO weights. Below 0.5: 1.6% of boxes (default 10.3%), 5.2% of small (default 37.5%), 0.5% of large [§13.3].
+- **Anchors**: base sizes 16 to 256, three scales per octave, aspect ratios `(0.5, 1, 2)`; still 9 per location, so the head loads COCO weights. Below 0.5: 1.6% of boxes (default 10.3%), 5.2% of small (default 37.5%), 0.5% of large [§13.3]. Proposed-anchor numbers computed during EDA, not in a notebook; to be recomputed in `03_one_stage_anchor.ipynb`.
 - Focal loss α and γ; positive and negative IoU thresholds (defaults 0.5 and 0.4).
 
 ## One-stage anchor-free (YOLO11)
