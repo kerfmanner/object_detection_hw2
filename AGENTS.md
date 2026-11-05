@@ -6,7 +6,7 @@
 
 - Task: object detection on drone video frames (VisDrone2019-VID, provided via Kaggle). Predict boxes, classes, and scores for every frame of 48 unlabelled test clips. Solo project.
 - Classes (8, 0-based): 0 person, 1 bicycle, 2 car, 3 van, 4 truck, 5 tricycle, 6 bus, 7 motor. COCO `category_id` in `annotations_coco.json` is 1-based.
-- Data: train 56 clips / 24,201 frames, val 7 clips / 2,846 frames, test 48 clips / 3,811 frames. Test frames 680×382 to 1920×1080; train and val may include frames up to 3840×2160, needs to be verified during EDA. Objects are small (often 10–30 px), dense, often occluded. Ignored regions (crowds, dense parking, VisDrone "others") are "don't care".
+- Data: train 56 clips / 24,454 frames, val 7 clips / 2,593 frames (adopted split, see Data and Experiments), test 48 clips / 3,811 frames. Test frames 680×382 to 1920×1080; train and val may include frames up to 3840×2160. Objects are small (often 10–30 px), dense, often occluded. Ignored regions (crowds, dense parking, VisDrone "others") are "don't care".
 - Metrics: COCO mAP@[.5:.95], AP50, AP_small, inference speed on validation. Leaderboard metric: not stated; most likely COCO mAP@[.5:.95] (public LB scores 0.09–0.35 as of 2026-11-03).
 - Submission: `image_id,PredictionString` with `class score x y w h` in original pixels, top-left corner, at most 500 boxes per image.
 - Required detector families: two-stage anchor-based, one-stage anchor-based, one-stage anchor-free, query-based, plus a final pipeline.
@@ -22,7 +22,7 @@
 7. Never delete or overwrite `data/`, `runs/`, checkpoints, `submissions/`, or saved notebook outputs.
 8. Never read, print, or log secrets (`~/.netrc`, `~/.kaggle/kaggle.json`, `.env` values).
 9. Ask before adding a new dependency.
-10. Always cite external code and ideas with a link in a comment or Markdown cell next to the code that uses them.
+10. Always cite external code and ideas with a link in a comment or Markdown cell next to the code that uses them. Prefer sources from `docs/literature.md`; when citing a new source, add it under "Other sources" there and fill its "Used in" column. 
 
 ## Repository Structure
 
@@ -131,7 +131,7 @@ logging.basicConfig(
 1. Our configs are TOML in `config/` with `snake_case` keys; framework-native formats only where required (e.g. Ultralytics `data.yaml`). Generated records are JSON.
 2. Each family has a `baseline.toml` that sets every supported option explicitly, with a short comment per field (meaning, allowed values, units). Code has no hidden defaults for config fields.
 3. Experiment configs contain only the fields they change and start with a one-line comment stating what they test.
-4. Shared field names across families: `arch`, `init` (`imagenet` / `coco`), `trainable_backbone_layers`, `min_size`, `epochs`, `batch_size`, `grad_accum`, `lr`, `weight_decay`, `schedule`, `warmup_iters`, `amp`, augmentation flags, `seed`. Family-specific options (anchors, RPN, focal loss, queries) go in their own table; inference options in `[inference]`.
+4. Shared field names across families: `arch`, `init` (`imagenet` / `coco`), `trainable_backbone_layers`, `min_size`, `max_size` (set explicitly; torchvision's default 1333 would override `min_size` on 16:9 frames), `epochs`, `batch_size`, `grad_accum`, `lr`, `weight_decay`, `schedule`, `warmup_iters`, `amp`, augmentation flags, `seed`. Family-specific options (anchors, RPN, focal loss, queries) go in their own table; inference options in `[inference]`.
 5. When adding an option to the code, add it to the baseline with its comment in the same change. Configs never contain secrets.
 
 ## Docstrings
@@ -200,35 +200,45 @@ Tests run on CPU against the smoke subset and never need a GPU or the full datas
 ## Data and Experiments
 
 1. Split by sequence, never by frame.
-    - Main protocol: the provided split, 56 train / 7 validation clips, for all comparisons and tuning.
+    - Main protocol: the provided split with one clip swap, decided in `01_eda.ipynb` section 11 before any training: `uav0000268_05773_v` (3840×2160) moved from val to train, `uav0000263_03289_v` (1904×1071) moved from train to val. Result: 56 train / 7 val clips, 2,593 val frames. The split is defined in `config/data.toml` `[splits]` and never changed again.
+    - Validation metrics: full val is the primary metric for all comparisons and model selection. mAP and AP_small on val frames at most 1920 px wide (the test size range) are reported alongside as secondary metrics only.
     - Cross-validation: `GroupKFold` by clip (3 folds over all 63 clips, seed 42) only for final pipeline candidates. Folds are stored in `config/data.toml`.
-    - Training frames: every 5th frame for tuning; final models may use step 1 or 2. TODO: confirm the step after EDA.
+    - Training frames: step 5 for tuning (frames 1, 6, 11, … of each clip, about 4,919 frames), step 2: about 12,240 frames for final models (frames 1, 3, 5, …), unless experiment for step 1. Justified in `01_eda.ipynb` section 9: at step 5 the same object moves about 0.2 of its size and 40% of box pairs have IoU < 0.5. 
     - Validation: every 5th frame for per-epoch monitoring, all frames for reported metrics.
-    - TODO: after EDA, check that the validation clips cover all classes, frame sizes, and densities. Propose changes; never change the split yourself.
 2. Ignored regions:
     - Evaluation: passed as `iscrowd=1`.
     - Training: filled with the dataset mean color before augmentation, except pixels inside labelled boxes. Masking versus no masking is a final-pipeline experiment.
 3. Seed 42 for new experiments. Never change existing seeds, splits, or folds unless the task is to change them.
-4. Tune only on validation. The public LB is a final check for selected models, not a tuning signal. Never use test data for training decisions.
+4. Tune only on validation. The public LB is a final check for selected models, not a tuning signal. Test images may be described (metadata, pixel statistics) but never used to fit or choose anything: no normalization statistics, pseudo-labels, or augmentation choices justified by test.
 5. Validation has 7 clips: treat small gains as noise until they repeat with another seed.
-6. Change one factor at a time against the family baseline. Baselines use COCO-pretrained weights, default hyperparameters, and the same input resolution, frame step, and budget across families. Resolution: shorter side 1024 px for all families (YOLO `imgsz` 1280). Provisional: confirm against object sizes in EDA.
+6. Inference keeps up to 500 detections per frame in every family (torchvision `box_detections_per_img` / `detections_per_img`, YOLO `max_det`; RT-DETR is limited by its query count). The shared evaluator uses `maxDets` 500 to match the leaderboard limit. NMS IoU stays at 0.5 or above and is per-class.
+7. Change one factor at a time against the family baseline. Baselines use COCO-pretrained weights and deliberately simple training settings: for torchvision, SGD with momentum 0.9, constant LR, no warmup, no augmentation; for Ultralytics and Hugging Face, framework defaults. All families share the same input resolution, frame step, and budget. Resolution: torchvision `min_size` 1024, `max_size` 1824 (every frame keeps its shorter side at 1024 px); YOLO `imgsz` 1824, which gives the same object scale because YOLO resizes the longer side to `imgsz`. YOLO trains on square letterboxed inputs, so its batch size may be smaller; record the effective batch size. YOLO `imgsz` 1280 is a later resolution experiment.
     - Two-stage: torchvision Faster R-CNN ResNet50-FPN v2.
     - One-stage anchor-based: torchvision RetinaNet ResNet50-FPN v2.
     - Anchor-free: YOLO11.
     - Query-based: Hugging Face `transformers` RT-DETRv2, COCO-pretrained (TODO: exact checkpoint, e.g. R50 backbone).
     - The tuned two-stage model is the reference for later families.
-7. Report only metrics from the shared evaluator in `src/evaluation/`. Framework metrics (e.g. Ultralytics `val`) are for monitoring only.
-8. `experiments/results.csv` has one row per run: experiment, config path, seed, commit, machine (`pc` / `kaggle`), mAP, AP50, AP75, AP_small, AP_medium, AP_large, ms/image, public LB if submitted, notes. It is the source of truth for reported numbers. Each run also logs to W&B under the same name: full config, curves, and a few validation frames with GT and predicted boxes.
-9. Datasets read frames from disk lazily; never load the whole dataset into memory.
-10. Prefer Polars expressions over Python loops for tabular work.
+8. Report only metrics from the shared evaluator in `src/evaluation/`. Framework metrics (e.g. Ultralytics `val`) are for monitoring only.
+9. `experiments/results.csv` has one row per run: experiment, config path, seed, commit, machine (`pc` / `kaggle`), mAP, AP50, AP75, AP_small, AP_medium, AP_large, ms/image, public LB if submitted, notes. It is the source of truth for reported numbers. Each run also logs to W&B under the same name: full config, curves, and a few validation frames with GT and predicted boxes.
+10. Datasets read frames from disk lazily; never load the whole dataset into memory.
+11. Prefer Polars expressions over Python loops for tabular work.
 
 ## Notebooks
 
 1. All notebooks in `notebooks/` are executed on the PC by me. Their saved outputs are what graders see. Never clear or modify saved outputs; when changing a notebook without running it, validate schema and syntax and say which outputs may be stale.
 2. Kaggle runs use a thin launcher notebook (not committed) that clones the repo, installs `requirements-kaggle.txt`, sets `DATA_ROOT`, and calls `train_detector(cfg)`. I download its run directory into `runs/`; repository notebooks load it like any local run.
-3. Layout, following the course practice notebook: title cell with a table of sections; numbered sections (setup, data, metrics, model, analysis, conclusions); a short Markdown cell before each section and a takeaway after each figure or table.
-4. Each detector notebook contains: baseline config and training history, an "inside the model" section (anchors vs box shapes, proposals or queries, feature levels), failure analysis (recall by size, error breakdown at the best-F1 validation threshold, example frames), and a comparison table against earlier detectors.
-5. Keep code cells short and reusable logic in `src/`. Brief inline comments are allowed in notebooks. No `print()` for narrative or results: use Markdown cells, cell return values, or `display()`. Use `tqdm.auto.tqdm` for long loops. No errors or long printouts in saved outputs.
+3. Layout: a title cell with a table of sections; numbered sections (setup, data, metrics, model, analysis, conclusions); a short Markdown cell before each section and a takeaway after each figure or table.
+4. Each detector notebook contains: baseline config and training history, an "inside the model" section (anchors vs box shapes, proposals or queries, feature levels), failure analysis, and a comparison table against earlier detectors. Failure analysis covers:
+    - recall by COCO size bucket at IoU 0.5;
+    - error breakdown at the score threshold that maximizes F1 on validation (IoU 0.5). Each detection above the threshold is matched greedily to GT in descending score order and gets one category:
+        - correct: IoU ≥ 0.5 with a GT box not yet matched;
+        - duplicate: IoU ≥ 0.5 only with GT boxes already matched;
+        - poor localisation: best IoU with any GT box in [0.1, 0.5);
+        - background: best IoU < 0.1.
+      Detections inside ignored regions are excluded. Misses are unmatched GT boxes;
+      A detection counts as inside an ignored region if, for at least one region, intersection / detection area ≥ 0.5 and the detection did not match a labelled object. This mirrors COCO crowd matching at IoU 0.5.
+    - example frames for each category.
+1. Keep code cells short and reusable logic in `src/`. Brief inline comments are allowed in notebooks. No `print()` for narrative or results: use Markdown cells, cell return values, or `display()`. Use `tqdm.auto.tqdm` for long loops. No errors or long printouts in saved outputs.
 
 ## Plotting
 
