@@ -3,7 +3,6 @@ import pytest
 
 from src.data.classes import CLASS_NAMES
 from src.data.statistics import (
-    assign_size_bucket,
     compute_clip_class_shares,
     compute_required_max_size,
     compute_resize_scale,
@@ -58,12 +57,6 @@ def test_compute_clip_class_shares_sums_to_one_per_clip(
         [1.0, 1.0, 1.0]
     )
     assert shares.filter(pl.col("clip") == "a")["person"].item() == pytest.approx(2 / 3)
-
-
-def test_assign_size_bucket_uses_coco_limits() -> None:
-    areas = pl.DataFrame({"area": [1, 32**2 - 1, 32**2, 96**2 - 1, 96**2, 10**6]})
-    buckets = areas.select(assign_size_bucket(pl.col("area"))).to_series().cast(pl.String)
-    assert buckets.to_list() == ["small", "small", "medium", "medium", "large", "large"]
 
 
 def test_resize_scale_keeps_shorter_side_unless_max_size_binds() -> None:

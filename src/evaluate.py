@@ -8,18 +8,14 @@ import polars as pl
 from decouple import config
 
 from src.data.annotations import load_annotations, load_split_clips
-from src.data.dataset import load_frame_steps, select_frames
-from src.evaluation.coco_metrics import (
-    MAX_TEST_WIDTH,
-    PREDICTION_COLUMNS,
-    evaluate_detections,
-)
+from src.evaluation.coco_metrics import MAX_TEST_WIDTH, evaluate_detections
 
 logger = logging.getLogger(__name__)
 
 DATA_CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "data.toml"
 PREDICTIONS_FILE = "val_predictions.parquet"
 METRICS_FILE = "metrics.json"
+REPORTED_FRAME_STEP = 1
 TRAINING_FIELDS = (
     "config",
     "seed",
@@ -67,34 +63,33 @@ METRIC_DECIMALS = 4
 def evaluate_run(run_dir: Path, data_root: Path, data_config_path: Path) -> dict:
     """Evaluate the validation predictions of a run and store them in its `metrics.json`.
 
+    The `inference` section of `metrics.json` must record `split` `val`, `frame_step` 1,
+    and `num_frames` equal to the number of val frames, so that frames without rows in the
+    predictions are frames without detections.
+
     Args:
-        run_dir: Run directory with `val_predictions.parquet` (`image_id`, 0-based
-            `class_id`, `score`, pixel `x`, `y`, `w`, `h`) with rows for every reported val
-            frame; a frame without detections has one row with only `image_id` set.
+        run_dir: Run directory with `metrics.json` and `val_predictions.parquet` (real
+            detections only: `image_id`, 0-based `class_id`, `score`, pixel `x`, `y`, `w`, `h`).
         data_root: Dataset root with the provided splits.
-        data_config_path: Path of `config/data.toml` with `[splits]` and `[frame_steps]`.
+        data_config_path: Path of `config/data.toml` with `[splits]`.
 
     Returns:
         The updated `metrics.json` content; the shared evaluator output is under
         `evaluation`, other keys are kept.
     """
-    rows = pl.read_parquet(run_dir / PREDICTIONS_FILE)
     tables = load_annotations(data_root, load_split_clips(data_config_path))
-    frame_step = load_frame_steps(data_config_path)["val_reporting"]
-    tables = tables._replace(images=select_frames(tables.images, frame_step))
-    val_ids = tables.images.filter(pl.col("split") == "val")["image_id"]
-    missing = val_ids.filter(~val_ids.is_in(rows["image_id"].implode()))
-    if missing.len():
-        raise ValueError(
-            f"{run_dir / PREDICTIONS_FILE} has no rows for {missing.len()} val frames, "
-            f"e.g. image_id {missing[0]}"
-        )
-    detection_columns = [column for column in PREDICTION_COLUMNS if column != "image_id"]
-    predictions = rows.filter(~pl.all_horizontal(pl.col(detection_columns).is_null()))
-    evaluation = evaluate_detections(tables, "val", predictions)
+    val_frames = tables.images.filter(pl.col("split") == "val").height
     metrics_path = run_dir / METRICS_FILE
-    metrics = json.loads(metrics_path.read_text()) if metrics_path.exists() else {}
-    metrics["evaluation"] = evaluation | {"frame_step": frame_step}
+    metrics = json.loads(metrics_path.read_text())
+    inference = metrics.get("inference", {})
+    expected = {"split": "val", "frame_step": REPORTED_FRAME_STEP, "num_frames": val_frames}
+    recorded = {key: inference.get(key) for key in expected}
+    if recorded != expected:
+        raise ValueError(
+            f"{metrics_path} records inference {recorded}, evaluation needs {expected}"
+        )
+    predictions = pl.read_parquet(run_dir / PREDICTIONS_FILE)
+    metrics["evaluation"] = evaluate_detections(tables, "val", predictions)
     metrics_path.write_text(json.dumps(metrics, indent=2) + "\n")
     return metrics
 

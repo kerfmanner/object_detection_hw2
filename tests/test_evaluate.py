@@ -29,6 +29,11 @@ TRAINING = {
     "notes": "baseline",
     "best_epoch": 9,
 }
+INFERENCE = {"split": "val", "frame_step": 1, "num_frames": 3, "ms_per_image": 12.3456}
+
+
+def write_metrics(run_dir: Path, metrics: dict) -> None:
+    (run_dir / METRICS_FILE).write_text(json.dumps(metrics))
 
 
 @pytest.fixture
@@ -52,35 +57,65 @@ def run_dir(tmp_path: Path, synthetic_annotations: AnnotationTables) -> Path:
     val_objects.select(
         "image_id", "class_id", pl.lit(0.9).alias("score"), pl.col(BOX_COLUMNS).cast(pl.Float64)
     ).write_parquet(run_dir / PREDICTIONS_FILE)
+    write_metrics(run_dir, {"training": TRAINING, "inference": INFERENCE})
     return run_dir
 
 
 def test_evaluate_run_keeps_existing_metrics_and_prints_the_results_row(
     run_dir: Path, synthetic_root: Path, synthetic_data_config: Path
 ) -> None:
-    existing = {"training": TRAINING, "inference": {"ms_per_image": 12.3456}}
-    (run_dir / METRICS_FILE).write_text(json.dumps(existing))
     metrics = evaluate_run(run_dir, synthetic_root, synthetic_data_config)
     assert json.loads((run_dir / METRICS_FILE).read_text()) == metrics
     assert metrics["training"] == TRAINING
+    assert metrics["inference"] == INFERENCE
     assert metrics["evaluation"]["map"] == 1.0
     assert metrics["evaluation"]["frames"] == 3
-    assert metrics["evaluation"]["frame_step"] == 1
     row = pl.read_csv(io.StringIO(format_results_row(run_dir, metrics)))
     assert tuple(row.columns) == RESULTS_COLUMNS
     assert row.height == 1
     values = row.row(0, named=True)
     assert values["experiment"] == "faster_rcnn-baseline"
     assert values["run_dir"] == run_dir.as_posix()
+    assert values["frame_step"] == 5
     assert values["map"] == 1.0
     assert values["ms_per_image"] == 12.3456
     assert values["public_lb"] is None
     assert values["notes"] == "baseline"
 
 
+def test_frames_without_rows_count_as_frames_without_detections(
+    run_dir: Path, synthetic_root: Path, synthetic_data_config: Path
+) -> None:
+    predictions = pl.read_parquet(run_dir / PREDICTIONS_FILE)
+    predictions.filter(pl.col("image_id") != 2).write_parquet(run_dir / PREDICTIONS_FILE)
+    evaluation = evaluate_run(run_dir, synthetic_root, synthetic_data_config)["evaluation"]
+    assert evaluation["frames"] == 3
+    assert 0.0 < evaluation["map"] < 1.0
+
+
+@pytest.mark.parametrize(
+    "inference",
+    [
+        {},
+        {"split": "test", "frame_step": 1, "num_frames": 3},
+        {"split": "val", "frame_step": 5, "num_frames": 3},
+        {"split": "val", "frame_step": 1, "num_frames": 2},
+    ],
+)
+def test_incomplete_inference_records_are_rejected(
+    run_dir: Path, synthetic_root: Path, synthetic_data_config: Path, inference: dict
+) -> None:
+    write_metrics(run_dir, {"training": TRAINING, "inference": inference})
+    with pytest.raises(ValueError, match="evaluation needs"):
+        evaluate_run(run_dir, synthetic_root, synthetic_data_config)
+    assert "evaluation" not in json.loads((run_dir / METRICS_FILE).read_text())
+
+
 def test_missing_training_fields_fail_after_metrics_are_written(
     run_dir: Path, synthetic_root: Path, synthetic_data_config: Path
 ) -> None:
+    inference = {key: value for key, value in INFERENCE.items() if key != "ms_per_image"}
+    write_metrics(run_dir, {"inference": inference})
     metrics = evaluate_run(run_dir, synthetic_root, synthetic_data_config)
     assert "evaluation" in json.loads((run_dir / METRICS_FILE).read_text())
     with pytest.raises(ValueError, match=r"training\.seed.*inference\.ms_per_image"):
@@ -95,19 +130,4 @@ def test_predictions_for_unknown_frames_are_rejected(
     pl.concat([predictions, unknown]).write_parquet(run_dir / PREDICTIONS_FILE)
     with pytest.raises(ValueError, match="unknown image_id"):
         evaluate_run(run_dir, synthetic_root, synthetic_data_config)
-    assert not (run_dir / METRICS_FILE).exists()
-
-
-def test_frames_without_detections_need_a_marker_row(
-    run_dir: Path, synthetic_root: Path, synthetic_data_config: Path
-) -> None:
-    predictions = pl.read_parquet(run_dir / PREDICTIONS_FILE)
-    without_frame = predictions.filter(pl.col("image_id") != 2)
-    without_frame.write_parquet(run_dir / PREDICTIONS_FILE)
-    with pytest.raises(ValueError, match="no rows for 1 val frames, e.g. image_id 2"):
-        evaluate_run(run_dir, synthetic_root, synthetic_data_config)
-    marker = pl.DataFrame({"image_id": [2]}, schema={"image_id": predictions.schema["image_id"]})
-    pl.concat([without_frame, marker], how="diagonal").write_parquet(run_dir / PREDICTIONS_FILE)
-    evaluation = evaluate_run(run_dir, synthetic_root, synthetic_data_config)["evaluation"]
-    assert evaluation["frames"] == 3
-    assert 0.0 < evaluation["map"] < 1.0
+    assert "evaluation" not in json.loads((run_dir / METRICS_FILE).read_text())

@@ -79,30 +79,6 @@ def compute_clip_class_shares(images: pl.DataFrame, objects: pl.DataFrame) -> pl
     )
 
 
-SMALL_AREA_LIMIT = 32**2
-MEDIUM_AREA_LIMIT = 96**2
-SIZE_BUCKETS = ("small", "medium", "large")
-
-
-def assign_size_bucket(area: pl.Expr) -> pl.Expr:
-    """Build an expression that maps box area in px² to its COCO size bucket.
-
-    Args:
-        area: Expression with box areas in px².
-
-    Returns:
-        Expression with `small` (< 32²), `medium` (< 96²), or `large` (≥ 96²).
-    """
-    return (
-        pl.when(area < SMALL_AREA_LIMIT)
-        .then(pl.lit(SIZE_BUCKETS[0]))
-        .when(area < MEDIUM_AREA_LIMIT)
-        .then(pl.lit(SIZE_BUCKETS[1]))
-        .otherwise(pl.lit(SIZE_BUCKETS[2]))
-        .cast(pl.Enum(SIZE_BUCKETS))
-    )
-
-
 def compute_resize_scale(min_size: int, max_size: int) -> pl.Expr:
     """Build an expression for the torchvision detection resize factor of each frame.
 

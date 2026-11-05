@@ -6,9 +6,9 @@ import pytest
 from faster_coco_eval.core.cocoeval import Params
 
 from src.data.annotations import BOX_COLUMNS, AnnotationTables
+from src.data.boxes import SIZE_RANGES
 from src.data.classes import CLASS_NAMES
 from src.evaluation.coco_metrics import (
-    SIZE_RANGES,
     build_coco_ground_truth,
     evaluate_detections,
     validate_predictions,

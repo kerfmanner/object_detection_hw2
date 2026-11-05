@@ -5,11 +5,54 @@ import pytest
 from src.data.boxes import (
     add_ignored_coverage_column,
     add_max_iou_columns,
+    compute_coverage_matrix,
     compute_covered_fraction,
     compute_iou_matrix,
     compute_max_iou_with_others,
     compute_paired_iou,
+    explode_size_buckets,
+    is_in_size_bucket,
 )
+
+
+def test_size_buckets_include_both_ends_as_in_coco() -> None:
+    areas = pl.DataFrame({"area": [0, 1023, 1024, 1025, 9215, 9216, 9217]})
+    flags = areas.select(
+        is_in_size_bucket(pl.col("area"), bucket).alias(bucket)
+        for bucket in ("small", "medium", "large")
+    )
+    assert flags.rows() == [
+        (True, False, False),
+        (True, False, False),
+        (True, True, False),
+        (False, True, False),
+        (False, True, False),
+        (False, True, True),
+        (False, False, True),
+    ]
+
+
+def test_explode_size_buckets_repeats_boundary_rows() -> None:
+    boxes = pl.DataFrame(
+        {"name": ["a", "b", "c", "d"], "w": [10, 32, 50, 96], "h": [10, 32, 50, 96]}
+    )
+    exploded = explode_size_buckets(boxes, pl.col("w") * pl.col("h"))
+    assert exploded.select("size_bucket", "name").cast({"size_bucket": pl.String}).rows() == [
+        ("small", "a"),
+        ("small", "b"),
+        ("medium", "b"),
+        ("medium", "c"),
+        ("medium", "d"),
+        ("large", "d"),
+    ]
+    assert exploded.columns == ["name", "w", "h", "size_bucket"]
+
+
+def test_coverage_matrix_divides_intersection_by_box_area() -> None:
+    boxes = np.array([[0, 0, 10, 10], [5, 0, 10, 10]], dtype=float)
+    regions = np.array([[0, 0, 5, 10], [100, 100, 5, 5]], dtype=float)
+    assert np.allclose(compute_coverage_matrix(boxes, regions), [[0.5, 0.0], [0.0, 0.0]])
+    assert compute_coverage_matrix(boxes, np.zeros((0, 4))).shape == (2, 0)
 
 
 def test_compute_iou_matrix_handles_identical_disjoint_touching_and_partial_boxes() -> None:

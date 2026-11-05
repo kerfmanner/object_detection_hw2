@@ -12,11 +12,6 @@ logger = logging.getLogger(__name__)
 PREDICTION_COLUMNS = ("image_id", "class_id", "score", *BOX_COLUMNS)
 MAX_DETECTIONS_PER_IMAGE = 500
 MAX_TEST_WIDTH = 1920
-SIZE_RANGES = {
-    "small": [0**2, 32**2],
-    "medium": [32**2, 96**2],
-    "large": [96**2, 1e5**2],
-}
 CATEGORIES = [{"id": i, "name": name} for i, name in enumerate(CLASS_NAMES, start=1)]
 
 
@@ -120,7 +115,7 @@ def compute_average_precision(
     Args:
         evaluator: Evaluator after `evaluate` and `accumulate`.
         iou_threshold: Single IoU threshold, or None to average over 0.50:0.95.
-        area: Area range label, `all` or a key of `SIZE_RANGES`.
+        area: Area range label, `all`, `small`, `medium`, or `large`.
         class_id: 0-based class to report, or None to average over classes.
 
     Returns:
@@ -141,8 +136,8 @@ def run_coco_evaluation(
 ) -> COCOeval_faster:
     """Run bbox evaluation with up to 500 detections per frame.
 
-    Size buckets are the standard COCO ranges of `SIZE_RANGES` with inclusive ends, so a
-    box of exactly 32² or 96² px² counts in both adjacent buckets.
+    Size buckets are the evaluator's standard COCO ranges (`src.data.boxes.SIZE_RANGES`)
+    with inclusive ends, so a box of exactly 32² or 96² px² counts in both adjacent buckets.
 
     Args:
         ground_truth: COCO ground truth with `iscrowd=1` ignored regions.

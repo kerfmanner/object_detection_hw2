@@ -3,6 +3,52 @@ import polars as pl
 
 from src.data.annotations import BOX_COLUMNS
 
+SIZE_RANGES = {
+    "small": [0**2, 32**2],
+    "medium": [32**2, 96**2],
+    "large": [96**2, 1e5**2],
+}
+SIZE_BUCKET_TYPE = pl.Enum(list(SIZE_RANGES))
+
+
+def is_in_size_bucket(area: pl.Expr, size_bucket: str) -> pl.Expr:
+    """Build an expression that tests whether box areas fall in a COCO size bucket.
+
+    The ranges are the standard COCO ones with inclusive ends, as in the evaluator, so an
+    area of exactly 32² or 96² px² lies in both adjacent buckets.
+
+    Args:
+        area: Expression with box areas in px².
+        size_bucket: Key of `SIZE_RANGES`: `small`, `medium`, or `large`.
+
+    Returns:
+        Boolean expression.
+    """
+    low, high = SIZE_RANGES[size_bucket]
+    return area.is_between(low, high)
+
+
+def explode_size_buckets(table: pl.DataFrame, area: pl.Expr) -> pl.DataFrame:
+    """Repeat each row once per COCO size bucket that contains its area.
+
+    Rows with an area of exactly 32² or 96² px² appear in both adjacent buckets, so counts
+    per bucket match the ground truth the evaluator uses for AP_small, AP_medium, AP_large.
+
+    Args:
+        table: Any table with box areas.
+        area: Expression with the box area in px² of each row.
+
+    Returns:
+        The rows grouped by bucket in the order of `SIZE_RANGES`, with a `size_bucket`
+        column of enum type `SIZE_BUCKET_TYPE`.
+    """
+    return pl.concat(
+        table.filter(is_in_size_bucket(area, size_bucket)).with_columns(
+            pl.lit(size_bucket).cast(SIZE_BUCKET_TYPE).alias("size_bucket")
+        )
+        for size_bucket in SIZE_RANGES
+    )
+
 
 def convert_xywh_to_xyxy(boxes: np.ndarray) -> np.ndarray:
     """Convert pixel boxes from top-left corner and size to corner coordinates.

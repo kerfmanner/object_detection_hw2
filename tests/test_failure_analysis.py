@@ -81,7 +81,7 @@ def test_recall_by_size_counts_matched_objects_per_bucket() -> None:
     tables = build_tables(OBJECTS, ignored=IGNORED, frame_sizes=((400, 400), (400, 400)))
     matches = match_detections(tables, "val", detections_table(DETECTIONS))
     recall = compute_recall_by_size(matches)
-    assert recall.select("size", "objects", "matched").rows() == [
+    assert recall.select("size_bucket", "objects", "matched").rows() == [
         ("small", 4, 2),
         ("medium", 1, 1),
         ("large", 1, 0),
@@ -93,7 +93,7 @@ def test_recall_by_size_counts_boundary_objects_in_both_buckets() -> None:
     tables = build_tables([(1, CAR, 0, 0, 32, 32), (1, CAR, 100, 0, 96, 96)])
     detections = detections_table([(1, CAR, 0.9, 0, 0, 32, 32)])
     recall = compute_recall_by_size(match_detections(tables, "val", detections))
-    assert recall.select("size", "objects", "matched").rows() == [
+    assert recall.select("size_bucket", "objects", "matched").rows() == [
         ("small", 1, 1),
         ("medium", 2, 1),
         ("large", 1, 0),

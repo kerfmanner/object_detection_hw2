@@ -4,8 +4,12 @@ import numpy as np
 import polars as pl
 
 from src.data.annotations import BOX_COLUMNS, AnnotationTables
-from src.data.boxes import compute_coverage_matrix, compute_iou_matrix
-from src.evaluation.coco_metrics import SIZE_RANGES
+from src.data.boxes import (
+    SIZE_BUCKET_TYPE,
+    compute_coverage_matrix,
+    compute_iou_matrix,
+    explode_size_buckets,
+)
 
 # Error types and the 0.5 / 0.1 IoU thresholds follow TIDE: https://arxiv.org/abs/2008.08115
 MATCH_IOU = 0.5
@@ -153,25 +157,31 @@ def match_detections(
 def compute_recall_by_size(matches: DetectionMatches) -> pl.DataFrame:
     """Compute the share of labelled objects matched at IoU 0.5 per COCO size bucket.
 
-    Buckets are the inclusive ranges of `SIZE_RANGES` used by the evaluator, so an object of
-    exactly 32² or 96² px² counts in both adjacent buckets.
+    Buckets are those of `explode_size_buckets`, as in the evaluator, so an object of exactly
+    32² or 96² px² counts in both adjacent buckets.
 
     Args:
         matches: Result of `match_detections`, without a score threshold.
 
     Returns:
-        One row per size bucket with `size`, `objects`, `matched`, and `recall` (NaN for an
-        empty bucket).
+        One row per size bucket in the order small, medium, large with `size_bucket`,
+        `objects`, `matched`, and `recall` (NaN for an empty bucket).
     """
-    area = pl.col("w") * pl.col("h")
-    return pl.concat(
-        matches.objects.filter(area.is_between(low, high)).select(
-            pl.lit(size).alias("size"),
-            pl.len().cast(pl.Int64).alias("objects"),
-            pl.col("matched_score").is_not_null().sum().cast(pl.Int64).alias("matched"),
+    buckets = pl.DataFrame({"size_bucket": SIZE_BUCKET_TYPE.categories})
+    counts = (
+        explode_size_buckets(matches.objects, pl.col("w") * pl.col("h"))
+        .group_by("size_bucket")
+        .agg(
+            pl.len().alias("objects"),
+            pl.col("matched_score").is_not_null().sum().alias("matched"),
         )
-        for size, (low, high) in SIZE_RANGES.items()
-    ).with_columns((pl.col("matched") / pl.col("objects")).alias("recall"))
+        .with_columns(pl.col("size_bucket").cast(pl.String))
+    )
+    return (
+        buckets.join(counts, on="size_bucket", how="left", maintain_order="left")
+        .with_columns(pl.col("objects", "matched").fill_null(0).cast(pl.Int64))
+        .with_columns((pl.col("matched") / pl.col("objects")).alias("recall"))
+    )
 
 
 def find_best_f1_threshold(matches: DetectionMatches) -> dict[str, float | None]:
