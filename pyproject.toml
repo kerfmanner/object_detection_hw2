@@ -9,11 +9,13 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "faster-coco-eval>=1.8.0",
-    "ipykernel>=7.4.0",
-    "jupyterlab>=4.6.5",
+    "matplotlib>=3.11.2",
+    "numpy>=2.5.4",
     "polars>=2.1.0",
     "pycocotools>=2.0.11",
     "python-decouple>=3.8",
+    "scikit-learn>=1.9.1",
+    "seaborn>=0.13.2",
     "torch>=2.11.0",
     "torchvision>=0.26.0",
     "tqdm>=4.70.1",
@@ -37,8 +39,23 @@ torchvision = [{ index = "pytorch-cu128" }]
 dev = [
     "black>=26.10.1",
     "flake8>=7.5.0",
+    "ipykernel>=7.4.0",
     "isort>=9.0.2",
+    "jupyter>=1.1.1",
+    "jupyterlab>=4.6.5",
+    "nbconvert>=7.17.2",
     "pre-commit>=4.7.0",
     "pytest>=9.2.0",
     "ty>=0.0.96",
 ]
+
+[tool.black]
+line-length = 100
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

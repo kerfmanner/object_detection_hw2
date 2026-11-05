@@ -1,2 +1,8 @@
 .env
 wandb/
+/data/
+/runs/
+.venv/
+__pycache__/
+.ipynb_checkpoints/
+*.pt
