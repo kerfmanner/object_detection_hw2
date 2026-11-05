@@ -47,8 +47,8 @@
 │   ├── data/                 # dataset (streams frames from disk), conversion, ignore regions, splits, augment
 │   ├── models/               # build_model(cfg) registry per detector family
 │   ├── training/             # train_detector(cfg): loop, LR schedule, AMP, per-epoch val history
-│   ├── evaluation/           # COCO metrics, AP and recall by size, error breakdown, best-F1 threshold, ms/image
-│   ├── inference/            # prediction, SAHI / TTA / WBF, temporal post-processing
+│   ├── evaluation/           # COCO metrics, AP and recall by size, error breakdown, best-F1 threshold
+│   ├── inference/            # prediction, ms/image, SAHI / TTA / WBF, temporal post-processing
 │   ├── visualization/        # palette, draw GT vs predictions, history and comparison plots
 │   ├── submission/           # write and validate the Kaggle CSV
 │   ├── train.py, evaluate.py, predict.py   # entry points, see Commands
@@ -124,7 +124,7 @@ logging.basicConfig(
 4. Domain abbreviations are fine (`iou`, `nms`, `bbox`, `map50`, `fps`), as are `i`, `j`, `x`, `y`, `w`, `h` and `_`. DataFrames get descriptive names, never `df`.
 5. Names follow the config file:
     - Experiment: `<family>-<config_stem>`, e.g. `faster_rcnn-rpn_post_nms_2000`. Seed repeats append `-s<seed>`; the default seed has no suffix.
-    - Run directory: `runs/<experiment>/<YYYYMMDD-HHMM>/` with resolved `config.toml`, `best.pt`, `last.pt`, `metrics.json`, `predictions.csv`.
+    - Run directory: `runs/<experiment>/<YYYYMMDD-HHMM>/` with resolved `config.toml`, `best.pt`, `last.pt`, `metrics.json`, `val_predictions.parquet`, `predictions.csv`.
     - The W&B run name and the `experiment` column in `results.csv` equal the experiment name.
     - Final submissions: `submissions/<experiment>.csv`; ensembles: `<family>-ens_<description>`.
 
@@ -194,7 +194,7 @@ WANDB_MODE=disabled uv run pytest
 Tests run on CPU against the smoke subset and never need a GPU or the full dataset. Smoke subset (`config/data.toml`, `[smoke]`): first train clip and first validation clip by name, frames 1–8 of each, read directly from `DATA_ROOT` (no copy).
 
 1. Conversion (`tests/test_conversion.py`): YOLO ↔ pixel round-trip within 1e-4; our loader matches `annotations_coco.json` (same boxes ±1 px, class id = `category_id` − 1); ignored regions never become class targets.
-2. Evaluation (`tests/test_evaluation.py`): predictions equal to GT give mAP 1.0, empty predictions give 0.0; a false positive inside an ignored region does not lower mAP; class ids convert 0 ↔ 1-based exactly once; size buckets are COCO small < 32², medium < 96², large ≥ 96² px².
+2. Evaluation (`tests/test_evaluation.py`): predictions equal to GT give mAP 1.0, empty predictions give 0.0; a false positive inside an ignored region does not lower mAP; class ids convert 0 ↔ 1-based exactly once; Size buckets are faster-coco-eval's standard COCO ranges ([0, 32²], [32², 96²], [96², ∞) px², ends inclusive as in COCO).
 3. Submission (`tests/test_submission.py`): one row per `image_id` of `test_images.csv`, no duplicates; class 0–7, score in [0, 1], `w, h > 0`, boxes clipped to the frame; at most 500 boxes per image, highest scores kept; empty string for frames without detections.
 4. Splits (`tests/test_splits.py`): no clip in two folds or in both train and validation; every clip assigned once; identical across runs with the same seed.
 5. Smoke (`tests/test_smoke.py`): each model builder runs one CPU forward and backward pass on 2 frames; inference output converts to a valid submission row.
@@ -205,7 +205,7 @@ Tests run on CPU against the smoke subset and never need a GPU or the full datas
     - Main protocol: the provided split with one clip swap, decided in `01_eda.ipynb` section 11 before any training: `uav0000268_05773_v` (3840×2160) moved from val to train, `uav0000263_03289_v` (1904×1071) moved from train to val. Result: 56 train / 7 val clips, 2,593 val frames. The split is defined in `config/data.toml` `[splits]` and never changed again.
     - Validation metrics: full val is the primary metric for all comparisons and model selection. mAP and AP_small on val frames at most 1920 px wide (the test size range) are reported alongside as secondary metrics only.
     - Cross-validation: `GroupKFold` by clip (3 folds over all 63 clips, seed 42) only for final pipeline candidates. Folds are stored in `config/data.toml`.
-    - Training frames: step 5 for tuning (frames 1, 6, 11, … of each clip, about 4,919 frames), step 2: about 12,240 frames for final models (frames 1, 3, 5, …), unless experiment for step 1. Justified in `01_eda.ipynb` section 9: at step 5 the same object moves about 0.2 of its size and 40% of box pairs have IoU < 0.5. 
+    - Training frames: step 5 for tuning (frames 1, 6, 11, … of each clip, about 4,919 frames), step 2 for final models (frames 1, 3, 5, …, about 12,240 frames); step 1 only as an experiment. Justified in `01_eda.ipynb` section 9: at step 5 the same object moves about 0.2 of its size and 40% of box pairs have IoU < 0.5. 
     - Validation: every 5th frame for per-epoch monitoring, all frames for reported metrics.
 2. Ignored regions:
     - Evaluation: passed as `iscrowd=1`.
@@ -214,7 +214,7 @@ Tests run on CPU against the smoke subset and never need a GPU or the full datas
 4. Tune only on validation. The public LB is a final check for selected models, not a tuning signal. Test images may be described (metadata, pixel statistics) but never used to fit or choose anything: no normalization statistics, pseudo-labels, or augmentation choices justified by test.
 5. Validation has 7 clips: treat small gains as noise until they repeat with another seed.
 6. Inference keeps up to 500 detections per frame in every family (torchvision `box_detections_per_img` / `detections_per_img`, YOLO `max_det`; RT-DETR is limited by its query count). The shared evaluator uses `maxDets` 500 to match the leaderboard limit. NMS IoU stays at 0.5 or above and is per-class.
-7. Change one factor at a time against the family baseline. Baselines use COCO-pretrained weights and deliberately simple training settings: for torchvision, SGD with momentum 0.9, constant LR, no warmup, no augmentation; for Ultralytics and Hugging Face, framework defaults. All families share the same input resolution, frame step, and budget. Resolution: torchvision `min_size` 1024, `max_size` 1824 (every frame about 1024 px (torchvision rounds some sizes to 1023); YOLO `imgsz` 1824, which gives the same object scale because YOLO resizes the longer side to `imgsz`. YOLO trains on square letterboxed inputs, so its batch size may be smaller; record the effective batch size. YOLO `imgsz` 1280 is a later resolution experiment.
+7. Change one factor at a time against the family baseline. Baselines use COCO-pretrained weights and deliberately simple training settings: for torchvision, SGD with momentum 0.9, constant LR, no warmup, no augmentation; for Ultralytics and Hugging Face, framework defaults. All families share the same input resolution, frame step, and budget. Resolution: torchvision `min_size` 1024, `max_size` 1824 (every frame about 1024 px (torchvision rounds some sizes to 1023)); YOLO `imgsz` 1824, which gives the same object scale because YOLO resizes the longer side to `imgsz`. YOLO trains on square letterboxed inputs, so its batch size may be smaller; record the effective batch size. YOLO `imgsz` 1280 is a later resolution experiment.
     - Two-stage: torchvision Faster R-CNN ResNet50-FPN v2.
     - One-stage anchor-based: torchvision RetinaNet ResNet50-FPN v2.
     - Anchor-free: YOLO11.
@@ -223,7 +223,8 @@ Tests run on CPU against the smoke subset and never need a GPU or the full datas
 8. Report only metrics from the shared evaluator in `src/evaluation/`. Framework metrics (e.g. Ultralytics `val`) are for monitoring only.
 9. Experiment logging:
     - Every completed run is logged, including runs that did not improve; the report grades unsuccessful attempts too. Crashed or aborted runs are not logged; note them in the run's W&B entry.
-    - The run directory holds the resolved `config.toml`, `metrics.json`, and checkpoints. `metrics.json` contains all evaluator outputs (overall, per size, per class, ≤ 1920 px subset), the per-epoch history, best epoch, training time, effective batch size, frame step, commit hash, a dirty flag if the working tree had uncommitted changes, and the machine.
+    - The run directory holds the resolved `config.toml`, checkpoints, `metrics.json`, `val_predictions.parquet`, and `predictions.csv`. `metrics.json` has three sections: `training` (config, seed, commit, is_dirty, machine, frame_step, epochs, effective_batch_size, gpu_hours, wandb_url, notes, per-epoch history, best epoch), `inference` (split, frame_step, num_frames, ms_per_image), and `evaluation` (overall, per size, per class, ≤ 1920 px subset).
+    -     - 
     - `best.pt` is selected by per-epoch monitoring mAP (val at step 5); reported metrics are then computed on all val frames.
     - `experiments/results.csv` has one row per run: experiment, config path, run directory, seed, commit, dirty flag, machine (`pc` / `kaggle`), frame step, epochs, effective batch size, GPU hours, mAP, AP50, AP75, AP_small, AP_medium, AP_large, mAP and AP_small on ≤ 1920 px frames, ms/image, public LB if submitted, W&B run URL, notes.
     - `notes` states what changed versus the baseline and the hypothesis being tested, in one line.
@@ -236,19 +237,20 @@ Tests run on CPU against the smoke subset and never need a GPU or the full datas
 ## Notebooks
 
 1. All notebooks in `notebooks/` are executed on the PC by me. Their saved outputs are what graders see. Never clear or modify saved outputs; when changing a notebook without running it, validate schema and syntax and say which outputs may be stale.
-2. Kaggle runs use a thin launcher notebook (not committed) that clones the repo, installs `requirements-kaggle.txt`, sets `DATA_ROOT`, and calls `train_detector(cfg)`. I download its run directory into `runs/`; repository notebooks load it like any local run.
+2. Kaggle runs use a thin launcher notebook (not committed) that clones the repo, installs `requirements-kaggle.txt`, sets `DATA_ROOT`, and runs `python -m src.train --config ...` . I download its run directory into `runs/`; repository notebooks load it like any local run.
 3. Layout: a title cell with a table of sections; numbered sections (setup, data, metrics, model, analysis, conclusions); a short Markdown cell before each section and a takeaway after each figure or table.
 4. Each detector notebook contains: baseline config and training history, an "inside the model" section (anchors vs box shapes, proposals or queries, feature levels), failure analysis, and a comparison table against earlier detectors. Failure analysis covers:
     - recall by COCO size bucket at IoU 0.5;
-    - error breakdown at the score threshold that maximizes F1 on validation (IoU 0.5). Each detection above the threshold is matched greedily to GT in descending score order and gets one category:
-        - correct: IoU ≥ 0.5 with a GT box not yet matched;
-        - duplicate: IoU ≥ 0.5 only with GT boxes already matched;
+    - error breakdown at the score threshold that maximizes F1 on validation (IoU 0.5). Detections above the threshold are matched greedily, in descending score order and class-aware as in COCO AP. Each gets the first category that applies, in this order:
+        - correct: IoU ≥ 0.5 with a same-class GT box not yet matched;
+        - ignored: not correct, and intersection / detection area ≥ 0.5 for at least one ignored region;
+        - duplicate: IoU ≥ 0.5 only with same-class GT boxes already matched;
+        - wrong class: IoU ≥ 0.5 only with GT boxes of other classes;
         - poor localisation: best IoU with any GT box in [0.1, 0.5);
         - background: best IoU < 0.1.
-      Detections inside ignored regions are excluded. Misses are unmatched GT boxes;
-      A detection counts as inside an ignored region if, for at least one region, intersection / detection area ≥ 0.5 and the detection did not match a labelled object. This mirrors COCO crowd matching at IoU 0.5.
+    - Ignored detections are left out of the F1 threshold and the error counts. Misses are GT boxes left unmatched;
     - example frames for each category.
-1. Keep code cells short and reusable logic in `src/`. Brief inline comments are allowed in notebooks. No `print()` for narrative or results: use Markdown cells, cell return values, or `display()`. Use `tqdm.auto.tqdm` for long loops. No errors or long printouts in saved outputs.
+5. Keep code cells short and reusable logic in `src/`. Brief inline comments are allowed in notebooks. No `print()` for narrative or results: use Markdown cells, cell return values, or `display()`. Use `tqdm.auto.tqdm` for long loops. No errors or long printouts in saved outputs.
 
 ## Plotting
 
@@ -276,8 +278,8 @@ GPU commands are run on the PC by me, never by the agent.
 - Smoke test (laptop, agent): `uv run python -m src.train --config config/<family>/baseline.toml --smoke`
   One CPU training step and one evaluation step on the smoke subset, W&B disabled, nothing written to `runs/`. Every baseline must pass it before a GPU run.
 - Evaluate: `uv run python -m src.evaluate --run runs/<experiment>/<timestamp>`
-  Shared evaluator on all validation frames; writes `metrics.json` (mAP, AP50, AP75, AP by size, per-class AP, ms/image) and prints the `results.csv` row.
-- Predict: `uv run python -m src.predict --run runs/<experiment>/<timestamp>`
-  Writes `predictions.csv` into the run directory, using the run config's `[inference]` table. I copy selected ones to `submissions/`.
+  Reads `val_predictions.parquet` (real detections only: image_id, class_id 0-based, score, x, y, w, h in original pixels), writes evaluator results into `metrics.json` under `evaluation`, and prints the `results.csv` row. Fails unless `inference.frame_step` is 1 and `inference.num_frames` covers all val frames, if predictions contain an unknown image_id, or if training fields or ms/image are absent.
+- Predict: `uv run python -m src.predict --run runs/<experiment>/<timestamp> --split val|test`
+  Uses the run config's `[inference]` table and `best.pt`. `--split val`: all val frames at step 1, writes `val_predictions.parquet` (only after all frames are done) and `split`, `frame_step`, `num_frames`, `ms_per_image` under `inference` in `metrics.json`; ms/image is measured on the PC only. `--split test`: writes `predictions.csv` in the Kaggle format. I copy selected ones to `submissions/`.
 - Validate submission: `uv run python -m src.submission.validate <csv>`
   Must pass before any upload to Kaggle.

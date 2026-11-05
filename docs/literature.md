@@ -35,9 +35,9 @@ Course citation: Oleh Basystyi. Multiple Object Video Detection | HW2 | UCU AI 2
 | Resource | Description | Used in |
 | --- | --- | --- |
 | [COCO detection metrics](https://cocodataset.org/#detection-eval) and [COCO paper](https://arxiv.org/abs/1405.0312) | Define mAP, AP50 and AP_small exactly as you are asked to report them. Check these definitions so your numbers are comparable across models. This will also help you understand and explain metrics during the defense. | |
-| [pycocotools](https://github.com/cocodataset/cocoapi) / [faster-coco-eval](https://github.com/MiXaiLL76/faster_coco_eval) | The reference COCO evaluator and a faster drop-in replacement. Marking ignored regions as iscrowd=1 makes the evaluator skip detections inside them. | |
+| [pycocotools](https://github.com/cocodataset/cocoapi) / [faster-coco-eval](https://github.com/MiXaiLL76/faster_coco_eval) | The reference COCO evaluator and a faster drop-in replacement. Marking ignored regions as iscrowd=1 makes the evaluator skip detections inside them. | `src/evaluation/coco_metrics.py` |
 | [TorchMetrics MeanAveragePrecision](https://lightning.ai/docs/torchmetrics/stable/detection/mean_average_precision.html) | A COCO-style mAP implementation that plugs into PyTorch training loops. Convenient for tracking validation mAP during training. | |
-| [TIDE](https://arxiv.org/abs/2008.08115) ([code](https://github.com/dbolya/tide)) | Breaks detection errors into classification, localization, duplicate, background and missed-object types. This is very useful for the failure-case analysis, since it tells you which error type costs the most mAP. This can be a strong tool for improving your leaderboard score. | |
+| [TIDE](https://arxiv.org/abs/2008.08115) ([code](https://github.com/dbolya/tide)) | Breaks detection errors into classification, localization, duplicate, background and missed-object types. This is very useful for the failure-case analysis, since it tells you which error type costs the most mAP. This can be a strong tool for improving your leaderboard score. | `src/evaluation/failure_analysis.py` |
 | [FiftyOne](https://docs.voxel51.com/) | A tool for browsing predictions against ground truth and filtering by confidence, size or error type. Helps you find failure cases visually instead of scrolling through images. | |
 
 ## Inference strategies

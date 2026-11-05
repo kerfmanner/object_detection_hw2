@@ -68,6 +68,22 @@ def compute_iou_matrix(boxes_a: np.ndarray, boxes_b: np.ndarray) -> np.ndarray:
     return intersection / union
 
 
+def compute_coverage_matrix(boxes: np.ndarray, regions: np.ndarray) -> np.ndarray:
+    """Compute the fraction of each box covered by each region separately.
+
+    Args:
+        boxes: Array of shape (n, 4) with `x, y, w, h` in px, top-left corner.
+        regions: Array of shape (k, 4) in the same format.
+
+    Returns:
+        Array of shape (n, k) with intersection / box area in [0, 1].
+    """
+    box_min, box_max = boxes[:, None, :2], boxes[:, None, :2] + boxes[:, None, 2:]
+    region_min, region_max = regions[None, :, :2], regions[None, :, :2] + regions[None, :, 2:]
+    overlap = np.clip(np.minimum(box_max, region_max) - np.maximum(box_min, region_min), 0, None)
+    return overlap[..., 0] * overlap[..., 1] / (boxes[:, 2] * boxes[:, 3])[:, None]
+
+
 def compute_max_iou_with_others(boxes: np.ndarray, groups: np.ndarray | None = None) -> np.ndarray:
     """Compute for every box the largest IoU with any other box of the same set.
 
