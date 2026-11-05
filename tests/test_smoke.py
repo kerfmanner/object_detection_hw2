@@ -16,7 +16,7 @@ from src.data.classes import CLASS_NAMES
 from src.data.dataset import VisDroneDataset
 from src.evaluation.coco_metrics import PREDICTION_COLUMNS, validate_predictions
 from src.inference.frames import predict_frames
-from src.models.faster_rcnn import build_faster_rcnn
+from src.models.registry import build_model
 from src.models.torchvision_labels import (
     shift_detections_from_torchvision,
     shift_targets_to_torchvision,
@@ -30,6 +30,8 @@ from tests.conftest import PROJECT_ROOT
 
 YOLO_BASELINE = PROJECT_ROOT / "config" / "yolo" / "baseline.toml"
 FASTER_RCNN_BASELINE = PROJECT_ROOT / "config" / "faster_rcnn" / "baseline.toml"
+RETINANET_BASELINE = PROJECT_ROOT / "config" / "retinanet" / "baseline.toml"
+TORCHVISION_BASELINES = [FASTER_RCNN_BASELINE, RETINANET_BASELINE]
 SMOKE_INPUT_SIZE = 320
 YOLO_OPTIMIZER_FIELDS = ("optimizer", "lr", "momentum", "warmup_bias_lr", "close_mosaic")
 
@@ -123,11 +125,13 @@ def test_yolo_smoke_run_writes_nothing_and_predicts_valid_submission_rows(
     assert (submission["PredictionString"] != "").all()
 
 
-def test_faster_rcnn_builder_runs_a_forward_and_backward_pass_on_two_frames(
+@pytest.mark.parametrize("baseline_path", TORCHVISION_BASELINES)
+def test_torchvision_builder_runs_a_forward_and_backward_pass_on_two_frames(
+    baseline_path: Path,
     smoke_annotations: AnnotationTables,
 ) -> None:
-    config = load_experiment_config(FASTER_RCNN_BASELINE)
-    model = build_faster_rcnn(
+    config = load_experiment_config(baseline_path)
+    model = build_model(
         config | {"min_size": SMOKE_OVERRIDES["min_size"], "max_size": SMOKE_OVERRIDES["max_size"]}
     )
     dataset = VisDroneDataset(smoke_annotations, "train", frame_step=1)
@@ -145,12 +149,12 @@ def test_faster_rcnn_builder_runs_a_forward_and_backward_pass_on_two_frames(
     with torch.inference_mode():
         raw = model(inputs)
     labels = torch.cat([d["labels"] for d in shift_detections_from_torchvision(raw)])
-    assert torch.cat([d["labels"] for d in raw]).min() >= 1
     assert labels.numel() > 0 and labels.min() >= 0 and labels.max() <= len(CLASS_NAMES) - 1
 
 
-def test_faster_rcnn_smoke_run_writes_nothing_and_predicts_valid_submission_rows(
-    data_root: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+@pytest.mark.parametrize("baseline_path", TORCHVISION_BASELINES)
+def test_torchvision_smoke_run_writes_nothing_and_predicts_valid_submission_rows(
+    baseline_path: Path, data_root: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("WANDB_MODE", "disabled")
     calls = []
@@ -164,7 +168,7 @@ def test_faster_rcnn_smoke_run_writes_nothing_and_predicts_valid_submission_rows
 
     monkeypatch.setattr(src.training.torchvision_loop, "predict_frames", record_prediction)
     runs_before = list_run_files()
-    assert run_training(FASTER_RCNN_BASELINE, data_root, tmp_path / "runs", is_smoke=True) is None
+    assert run_training(baseline_path, data_root, tmp_path / "runs", is_smoke=True) is None
     assert not (tmp_path / "runs").exists()
     assert list_run_files() == runs_before
     assert len(calls) == 1

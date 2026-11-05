@@ -1,0 +1,41 @@
+# RetinaNet baseline: COCO-pretrained ResNet50-FPN v2, SGD at a constant LR without warmup or augmentation, frozen BatchNorm, torchvision default anchors and matching
+arch = "retinanet_resnet50_fpn_v2"  # torchvision detector builder; the only supported value
+init = "coco"  # pretrained weights: coco (torchvision RetinaNet_ResNet50_FPN_V2_Weights.COCO_V1), the only supported value; the final classification convolution is new
+trainable_backbone_layers = 3  # trainable ResNet stages counted from the last, 0 to 5; earlier stages are frozen (torchvision default 3)
+train_frames = "train_tuning"  # [frame_steps] key in config/data.toml: train_tuning (step 5) or train_final (step 2)
+min_size = 1024  # shorter frame side after resizing, in px; every frame becomes about 1024 x 1820 px
+max_size = 1824  # upper bound of the longer side after resizing, in px; set explicitly because torchvision's default 1333 would override min_size on 16:9 frames
+epochs = 0  # TODO: set after the timing run to floor(5400 / epoch_seconds), the 1.5 GPU hour baseline budget; epoch_seconds includes monitoring. Training epochs, integer of at least 1
+batch_size = 0  # TODO: set after the timing run; suggested 4 if its gpu_memory_gb stays below about 11, else 2 with grad_accum 2. Frames per forward pass, integer of at least 1
+grad_accum = 1  # batches whose gradients are summed per optimizer step, integer of at least 1; effective batch size = batch_size * grad_accum
+num_workers = 4  # DataLoader worker processes decoding frames, integer of at least 0
+lr = 0.0  # TODO: set after the timing run; suggested 0.0025 for effective batch 4, the torchvision reference RetinaNet LR 0.01 at batch 16 scaled linearly (https://github.com/pytorch/vision/tree/main/references/detection, https://arxiv.org/abs/1706.02677). SGD learning rate, positive
+momentum = 0.9  # SGD momentum
+weight_decay = 0.0001  # SGD L2 weight decay on all trainable parameters (torchvision reference default)
+schedule = "constant"  # LR schedule: constant, the only supported value
+warmup_iters = 0  # LR warmup iterations: 0, the only supported value
+freeze_batchnorm = true  # BatchNorm layers keep their COCO running statistics (eval mode) and their weights and biases are not trained; false trains them on batches of batch_size frames; the v2 heads use GroupNorm, which this does not affect
+amp = true  # mixed precision training on CUDA: true or false; CPU always trains in float32; inference is float32
+seed = 42  # seed of the new classification convolution and the shuffling order
+
+[anchors]
+# Anchors per FPN level; all values are the torchvision defaults
+sizes = [[32, 40, 50], [64, 80, 101], [128, 161, 203], [256, 322, 406], [512, 645, 812]]  # anchor sizes in px (square root of the area), one list per FPN level P3 to P7 (strides 8 to 128); torchvision's x, int(x * 2^(1/3)), int(x * 2^(2/3))
+aspect_ratios = [[0.5, 1.0, 2.0], [0.5, 1.0, 2.0], [0.5, 1.0, 2.0], [0.5, 1.0, 2.0], [0.5, 1.0, 2.0]]  # anchor height / width ratios, one list per FPN level; anchors per location (sizes x ratios) must stay 9 to reuse the COCO heads
+
+[matching]
+# Anchor assignment for the losses; all values are the torchvision defaults
+fg_iou_thresh = 0.5  # anchors with IoU at least this with a GT box are positives; each GT box also keeps its best anchors (low-quality matches)
+bg_iou_thresh = 0.4  # anchors with IoU below this with every GT box are negatives; anchors in between are ignored
+
+[inference]
+score_thresh = 0.001  # minimum class score of kept candidates, in [0, 1]; low so that AP integrates the full precision-recall curve (torchvision default 0.05)
+nms_thresh = 0.5  # per-class NMS IoU threshold of the final detections, at least 0.5
+detections_per_img = 500  # maximum detections per frame, at most 500 (torchvision default 300)
+topk_candidates = 1000  # highest-scoring (anchor, class) candidates kept per FPN level before NMS (torchvision default)
+warmup_images = 10  # untimed forward passes on the first frame before measuring ms/image
+
+[logging]
+log_interval = 50  # batches between W&B points of the training losses and LR
+sample_frames = 4  # monitoring val frames drawn with GT and predicted boxes to W&B after each epoch, evenly spaced
+sample_score_thresh = 0.3  # minimum score of the predicted boxes drawn on those frames

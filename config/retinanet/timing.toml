@@ -1,0 +1,4 @@
+# Timing run, not a reported experiment: one epoch at the suggested batch size and LR to measure epoch time and peak GPU memory (gpu_memory_gb in metrics.json)
+epochs = 1
+batch_size = 4
+lr = 0.0025

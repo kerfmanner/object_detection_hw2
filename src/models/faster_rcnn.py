@@ -3,29 +3,13 @@ from torchvision.models.detection import (
     FasterRCNN_ResNet50_FPN_V2_Weights,
     fasterrcnn_resnet50_fpn_v2,
 )
-from torchvision.models.detection.anchor_utils import AnchorGenerator
 from torchvision.models.detection.faster_rcnn import FasterRCNN, FastRCNNPredictor
 
 from src.data.classes import CLASS_NAMES
+from src.models.anchors import build_anchor_generator
 
 SUPPORTED_ARCH = "fasterrcnn_resnet50_fpn_v2"
 SUPPORTED_INIT = "coco"
-
-
-def build_anchor_generator(rpn: dict) -> AnchorGenerator:
-    """Build the RPN anchor generator of the `[rpn]` config table.
-
-    Args:
-        rpn: The `[rpn]` table with `anchor_sizes` (one list of sizes in px per FPN level)
-            and `aspect_ratios` (one list of height / width ratios per FPN level).
-
-    Returns:
-        Anchor generator with the configured sizes and aspect ratios.
-    """
-    return AnchorGenerator(
-        tuple(tuple(sizes) for sizes in rpn["anchor_sizes"]),
-        tuple(tuple(ratios) for ratios in rpn["aspect_ratios"]),
-    )
 
 
 def build_faster_rcnn(config: dict) -> FasterRCNN:
@@ -76,14 +60,9 @@ def build_faster_rcnn(config: dict) -> FasterRCNN:
         box_batch_size_per_image=roi_heads["batch_size_per_image"],
         box_positive_fraction=roi_heads["positive_fraction"],
     )
-    anchor_generator = build_anchor_generator(rpn)
-    coco_anchors = detector.rpn.anchor_generator.num_anchors_per_location()
-    if anchor_generator.num_anchors_per_location() != coco_anchors:
-        raise ValueError(
-            f"Anchors per location {anchor_generator.num_anchors_per_location()} differ from "
-            f"the COCO RPN head's {coco_anchors}"
-        )
-    detector.rpn.anchor_generator = anchor_generator
+    detector.rpn.anchor_generator = build_anchor_generator(
+        rpn["anchor_sizes"], rpn["aspect_ratios"], detector.rpn.anchor_generator
+    )
     in_features = detector.roi_heads.box_predictor.cls_score.in_features
     with torch.random.fork_rng(devices=[]):
         torch.manual_seed(config["seed"])

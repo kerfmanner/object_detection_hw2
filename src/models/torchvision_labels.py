@@ -27,16 +27,27 @@ def shift_targets_to_torchvision(
 def shift_detections_from_torchvision(
     detections: list[dict[str, torch.Tensor]],
 ) -> list[dict[str, torch.Tensor]]:
-    """Shift the labels of torchvision detections by -1 to our 0-based class ids.
+    """Drop detections of the background label 0 and shift the other labels by -1.
+
+    Faster R-CNN never predicts label 0. RetinaNet scores every column of its sigmoid
+    classifier, including column 0, which no target trains as positive, so it can predict
+    label 0 with low scores.
 
     Args:
         detections: Per image, torchvision `boxes` (k, 4), `scores` (k,), and `labels` (k,)
-            from 1 to 8.
+            from 0 to 8.
 
     Returns:
-        New detection dictionaries with the same `boxes` and `scores` and 0-based `labels`.
+        New detection dictionaries without label 0, with 0-based `labels` from 0 to 7.
     """
-    return [
-        frame_detections | {"labels": frame_detections["labels"] - TORCHVISION_LABEL_OFFSET}
-        for frame_detections in detections
-    ]
+    shifted = []
+    for frame_detections in detections:
+        is_object = frame_detections["labels"] >= TORCHVISION_LABEL_OFFSET
+        shifted.append(
+            {
+                "boxes": frame_detections["boxes"][is_object],
+                "scores": frame_detections["scores"][is_object],
+                "labels": frame_detections["labels"][is_object] - TORCHVISION_LABEL_OFFSET,
+            }
+        )
+    return shifted

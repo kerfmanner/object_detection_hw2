@@ -1,4 +1,4 @@
-# Faster R-CNN baseline: COCO-pretrained ResNet50-FPN v2, SGD at a constant LR without warmup or augmentation, torchvision default RPN and RoI heads
+# Faster R-CNN baseline: COCO-pretrained ResNet50-FPN v2, SGD at a constant LR without warmup or augmentation, frozen BatchNorm, torchvision default RPN and RoI heads
 arch = "fasterrcnn_resnet50_fpn_v2"  # torchvision detector builder; the only supported value
 init = "coco"  # pretrained weights: coco (torchvision FasterRCNN_ResNet50_FPN_V2_Weights.COCO_V1), the only supported value; the box predictor is new
 trainable_backbone_layers = 3  # trainable ResNet stages counted from the last, 0 to 5; earlier stages are frozen (torchvision default 3)
@@ -14,6 +14,7 @@ momentum = 0.9  # SGD momentum
 weight_decay = 0.0001  # SGD L2 weight decay on all trainable parameters (torchvision reference default)
 schedule = "constant"  # LR schedule: constant, the only supported value
 warmup_iters = 0  # LR warmup iterations: 0, the only supported value
+freeze_batchnorm = true  # BatchNorm layers keep their COCO running statistics (eval mode) and their weights and biases are not trained; false trains them on batches of batch_size frames
 amp = true  # mixed precision training on CUDA: true or false; CPU always trains in float32; inference is float32
 seed = 42  # seed of the new box predictor, the shuffling order, and RPN and RoI sampling
 

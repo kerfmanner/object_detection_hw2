@@ -2,12 +2,41 @@ import numpy as np
 import polars as pl
 import torch
 from torchvision.models.detection import fasterrcnn_resnet50_fpn_v2, retinanet_resnet50_fpn_v2
+from torchvision.models.detection.anchor_utils import AnchorGenerator
 
 DEFAULT_ANCHOR_MODELS = {
     "fasterrcnn_resnet50_fpn_v2": fasterrcnn_resnet50_fpn_v2,
     "retinanet_resnet50_fpn_v2": retinanet_resnet50_fpn_v2,
 }
 STRIDE_PROBE_SIZE = 256
+
+
+def build_anchor_generator(
+    sizes: list[list[int]], aspect_ratios: list[list[float]], pretrained: AnchorGenerator
+) -> AnchorGenerator:
+    """Build a configured anchor generator to replace the default one of a pretrained detector.
+
+    The number of anchors per location must equal the pretrained generator's, so that the
+    pretrained head weights still match it.
+
+    Args:
+        sizes: Anchor sizes in px (square root of the area), one list per FPN level.
+        aspect_ratios: Anchor height / width ratios, one list per FPN level.
+        pretrained: Anchor generator the detector was built with.
+
+    Returns:
+        Anchor generator with the configured sizes and aspect ratios.
+    """
+    generator = AnchorGenerator(
+        tuple(tuple(level_sizes) for level_sizes in sizes),
+        tuple(tuple(level_ratios) for level_ratios in aspect_ratios),
+    )
+    if generator.num_anchors_per_location() != pretrained.num_anchors_per_location():
+        raise ValueError(
+            f"Anchors per location {generator.num_anchors_per_location()} differ from the "
+            f"pretrained head's {pretrained.num_anchors_per_location()}"
+        )
+    return generator
 
 
 def compute_shape_iou(shapes_a: np.ndarray, shapes_b: np.ndarray) -> np.ndarray:

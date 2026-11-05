@@ -11,6 +11,7 @@ FramePredictor = Callable[..., tuple[pl.DataFrame, float]]
 
 FAMILY_PREDICTORS: dict[str, FramePredictor] = {
     "faster_rcnn": predict_torchvision_frames,
+    "retinanet": predict_torchvision_frames,
     "yolo": predict_yolo_frames,
 }
 

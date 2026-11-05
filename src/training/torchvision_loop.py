@@ -82,6 +82,34 @@ def collate_detection_batch(batch: list[tuple[torch.Tensor, dict[str, torch.Tens
     return [frame for frame, _ in batch], [target for _, target in batch]
 
 
+def freeze_batchnorm(model: torch.nn.Module) -> None:
+    """Stop training the affine parameters of every BatchNorm layer.
+
+    Args:
+        model: Detector whose `BatchNorm2d` weights and biases get `requires_grad` False.
+    """
+    for module in model.modules():
+        if isinstance(module, torch.nn.BatchNorm2d):
+            module.requires_grad_(False)
+
+
+def set_train_mode(model: torch.nn.Module, is_batchnorm_frozen: bool) -> None:
+    """Put a detector in training mode, keeping BatchNorm layers in eval mode if frozen.
+
+    In eval mode a BatchNorm layer normalizes with its stored running statistics and does
+    not update them.
+
+    Args:
+        model: Detector to train.
+        is_batchnorm_frozen: Whether `BatchNorm2d` layers stay in eval mode.
+    """
+    model.train()
+    if is_batchnorm_frozen:
+        for module in model.modules():
+            if isinstance(module, torch.nn.BatchNorm2d):
+                module.eval()
+
+
 def build_optimizer(model: torch.nn.Module, config: dict) -> torch.optim.SGD:
     """Build SGD with momentum over the trainable parameters, at a constant LR without warmup.
 
@@ -121,14 +149,16 @@ def train_one_epoch(
     Each batch loss is divided by `grad_accum`, and the gradients of that many consecutive
     batches are summed before an optimizer step; a last incomplete group also makes a step.
     Every `log_interval` batches the mean losses and the LR go to W&B under `iter/`, against
-    the `iteration` (batch) counter.
+    the `iteration` (batch) counter. With `freeze_batchnorm`, BatchNorm layers stay in eval
+    mode, so their running statistics do not change.
 
     Args:
         model: torchvision detector on `device`.
         loader: DataLoader with `collate_detection_batch` over a `VisDroneDataset`.
         optimizer: Optimizer from `build_optimizer`.
         scaler: Gradient scaler, enabled when training with mixed precision.
-        config: Resolved configuration with `grad_accum` and `[logging]` `log_interval`.
+        config: Resolved configuration with `grad_accum`, `freeze_batchnorm`, and
+            `[logging]` `log_interval`.
         device: Device of the model.
         wandb_run: W&B run for the loss curves.
         iteration: Number of batches trained before this epoch.
@@ -137,7 +167,7 @@ def train_one_epoch(
         Mean of each loss over the epoch's batches, with their sum under `loss`, and the
         number of batches trained after this epoch.
     """
-    model.train()
+    set_train_mode(model, config["freeze_batchnorm"])
     grad_accum, log_interval = config["grad_accum"], config["logging"]["log_interval"]
     epoch_sums: dict[str, float] = {}
     interval_sums: dict[str, float] = {}
@@ -235,7 +265,9 @@ def fit_torchvision_detector(
 ) -> tuple[list[dict], int]:
     """Train a torchvision detector, monitor it after every epoch, and save its checkpoints.
 
-    The global RNG and the shuffling generator are seeded with `seed`. Each epoch trains
+    The global RNG and the shuffling generator are seeded with `seed`. With
+    `freeze_batchnorm`, BatchNorm parameters are left out of the optimizer and BatchNorm
+    layers keep their pretrained running statistics. Each epoch trains
     on shuffled batches of `batch_size` frames (`train_one_epoch`), then predicts the
     monitoring frames one at a time in eval mode and scores them with the shared evaluator.
     `last.pt` is written after every epoch and `best.pt` whenever the monitoring mAP beats
@@ -245,7 +277,8 @@ def fit_torchvision_detector(
     Args:
         model: torchvision detector with background label 0.
         config: Resolved configuration with `epochs`, `batch_size`, `num_workers`, `amp`,
-            `seed`, the optimizer fields of `build_optimizer`, and the `[logging]` table.
+            `seed`, `freeze_batchnorm`, the optimizer fields of `build_optimizer`, and the
+            `[logging]` table.
         train_dataset: Training frames.
         monitor_tables: Annotation tables whose `images` are the monitoring val frames.
         checkpoint_dir: Existing directory for `best.pt` and `last.pt`.
@@ -270,6 +303,8 @@ def fit_torchvision_detector(
         generator=torch.Generator().manual_seed(config["seed"]),
     )
     model.to(device)
+    if config["freeze_batchnorm"]:
+        freeze_batchnorm(model)
     optimizer = build_optimizer(model, config)
     is_cuda = device.type == "cuda"
     scaler = torch.amp.GradScaler(device.type, enabled=config["amp"] and is_cuda)

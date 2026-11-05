@@ -40,15 +40,19 @@ def convert_frames_to_inputs(
 def convert_torchvision_detections(detections: dict[str, torch.Tensor]) -> np.ndarray:
     """Convert the detections of one frame to classes, scores, and top-left boxes.
 
+    Boxes that torchvision clipped to zero width or height at the frame border are dropped;
+    Faster R-CNN already removes them, RetinaNet does not.
+
     Args:
         detections: `boxes` (k, 4) with `x1, y1, x2, y2` in px of the original frame,
             `scores` (k,), and 0-based `labels` (k,).
 
     Returns:
-        Array of shape (k, 6) with the 0-based class id, score, and `x, y, w, h` in px.
+        Array of shape (n, 6), n <= k, with the 0-based class id, score, and `x, y, w, h`
+        in px.
     """
     xyxy = detections["boxes"].double().cpu().numpy()
-    return np.column_stack(
+    converted = np.column_stack(
         [
             detections["labels"].cpu().numpy(),
             detections["scores"].double().cpu().numpy(),
@@ -56,6 +60,7 @@ def convert_torchvision_detections(detections: dict[str, torch.Tensor]) -> np.nd
             xyxy[:, 2:] - xyxy[:, :2],
         ]
     )
+    return converted[(converted[:, 4] > 0) & (converted[:, 5] > 0)]
 
 
 def detect_frames(

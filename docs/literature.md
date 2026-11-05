@@ -91,7 +91,7 @@ Course citation: Oleh Basystyi. Multiple Object Video Detection | HW2 | UCU AI 2
 | Resource | Description | Used in |
 | --- | --- | --- |
 | [SSD](https://arxiv.org/abs/1512.02325) | Predicts boxes from anchors at several feature map scales in a single pass. A simple baseline that shows the core one-stage idea. | |
-| [RetinaNet / Focal Loss](https://arxiv.org/abs/1708.02002) | Shows that foreground-background imbalance is the main problem for one-stage detectors and fixes it with focal loss. Key reading for the question about removing the proposal stage. | |
+| [RetinaNet / Focal Loss](https://arxiv.org/abs/1708.02002) | Shows that foreground-background imbalance is the main problem for one-stage detectors and fixes it with focal loss. Key reading for the question about removing the proposal stage. | `src/models/retinanet.py` |
 | [YOLOv2](https://arxiv.org/abs/1612.08242) | Picks anchor shapes by k-means clustering of training boxes. Use this approach to ground your anchor configuration in the dataset statistics. || `01_eda.ipynb` §13; `src/models/anchors.py` |
 | [ATSS](https://arxiv.org/abs/1912.02424) | Argues that the gap between anchor-based and anchor-free detectors comes mostly from how positives are assigned. Very useful for the comparisons across detector families. | |
 
@@ -123,7 +123,7 @@ Course citation: Oleh Basystyi. Multiple Object Video Detection | HW2 | UCU AI 2
 
 | Resource | Description | Used in |
 | --- | --- | --- |
-| [TorchVision detection tutorial](https://docs.pytorch.org/tutorials/intermediate/torchvision_tutorial.html) and [reference scripts](https://github.com/pytorch/vision/tree/main/references/detection) | Show how to fine-tune Faster R-CNN, RetinaNet, FCOS and SSD on a custom dataset. The lowest-friction way to train anchor-based and FCOS models with full control over the code. | `src/models/faster_rcnn.py`; `src/models/torchvision_labels.py`; `config/faster_rcnn/baseline.toml` |
+| [TorchVision detection tutorial](https://docs.pytorch.org/tutorials/intermediate/torchvision_tutorial.html) and [reference scripts](https://github.com/pytorch/vision/tree/main/references/detection) | Show how to fine-tune Faster R-CNN, RetinaNet, FCOS and SSD on a custom dataset. The lowest-friction way to train anchor-based and FCOS models with full control over the code. | `src/models/faster_rcnn.py`; `src/models/torchvision_labels.py`; `config/faster_rcnn/baseline.toml`; `config/retinanet/baseline.toml` |
 | [Detectron2](https://github.com/facebookresearch/detectron2) | Meta's detection library with configurable two-stage and RetinaNet models. Good if you want fine-grained control over RPN and RoI head settings. | |
 | [MMDetection](https://github.com/open-mmlab/mmdetection) | The largest model zoo (Cascade R-CNN, ATSS, GFL, DINO and many more) under one config system. Pin library versions, since installation on recent PyTorch can be difficult. | |
 | [Ultralytics](https://docs.ultralytics.com/) | Easy training of YOLO models and RT-DETR with a shared API, free under the AGPL-3.0 license. Convenient for keeping the training protocol identical across models. | `src/models/yolo.py`; `src/training/yolo.py`; `src/inference/yolo.py` |
@@ -140,4 +140,5 @@ Sources outside the course list. Add a row whenever one is cited.
 | [VisDrone toolkit README](https://github.com/VisDrone/VisDrone2018-VID-toolkit) | Meaning of the occlusion and truncation levels. | `01_eda.ipynb` §8 |
 | [seaborn color palettes](https://seaborn.pydata.org/tutorial/color_palettes.html) | Source of the colorblind-safe class colors. | `src/visualization/style.py` |
 | [torchvision detection transform](https://github.com/pytorch/vision/blob/main/torchvision/models/detection/transform.py) | `GeneralizedRCNNTransform` resize rule (`min_size`, `max_size`). | `src/data/statistics.py`; `01_eda.ipynb` §5.4 |
-| [Goyal et al., Accurate, Large Minibatch SGD](https://arxiv.org/abs/1706.02677) | Linear scaling rule: scale the learning rate with the batch size. | `config/faster_rcnn/baseline.toml` (suggested `lr`) |
+| [Goyal et al., Accurate, Large Minibatch SGD](https://arxiv.org/abs/1706.02677) | Linear scaling rule: scale the learning rate with the batch size. | `config/faster_rcnn/baseline.toml`, `config/retinanet/baseline.toml` (suggested `lr`) |
+| [torchvision RetinaNet](https://github.com/pytorch/vision/blob/main/torchvision/models/detection/retinanet.py) | Classification head initialization (std 0.01, prior probability 0.01). | `src/models/retinanet.py` |
