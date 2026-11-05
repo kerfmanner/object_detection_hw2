@@ -15,13 +15,16 @@ MAX_TEST_WIDTH = 1920
 CATEGORIES = [{"id": i, "name": name} for i, name in enumerate(CLASS_NAMES, start=1)]
 
 
-def validate_predictions(predictions: pl.DataFrame, images: pl.DataFrame) -> None:
-    """Check that predictions refer to evaluated frames and contain valid boxes.
+def find_invalid_prediction_rows(predictions: pl.DataFrame, images: pl.DataFrame) -> dict[str, int]:
+    """Count prediction rows with unknown frames, invalid classes or scores, or invalid boxes.
 
     Args:
         predictions: Table with `image_id`, 0-based `class_id`, `score`, and pixel box
             `x`, `y`, `w`, `h` (top-left corner).
-        images: Image table of the evaluated frames with `image_id`.
+        images: Image table of the frames the predictions may refer to, with `image_id`.
+
+    Returns:
+        Mapping from problem description to its number of rows, only for problems found.
     """
     missing_columns = sorted(set(PREDICTION_COLUMNS) - set(predictions.columns))
     if missing_columns:
@@ -37,10 +40,22 @@ def validate_predictions(predictions: pl.DataFrame, images: pl.DataFrame) -> Non
     counts = predictions.select(
         expression.sum().alias(problem) for problem, expression in problems.items()
     ).row(0, named=True)
+    return {problem: count for problem, count in counts.items() if count}
+
+
+def validate_predictions(predictions: pl.DataFrame, images: pl.DataFrame) -> None:
+    """Check that predictions refer to evaluated frames, contain valid boxes, and keep at
+    most 500 boxes per frame.
+
+    Args:
+        predictions: Table with `image_id`, 0-based `class_id`, `score`, and pixel box
+            `x`, `y`, `w`, `h` (top-left corner).
+        images: Image table of the evaluated frames with `image_id`.
+    """
+    found = find_invalid_prediction_rows(predictions, images)
     crowded_frames = (
         predictions.group_by("image_id").len().filter(pl.col("len") > MAX_DETECTIONS_PER_IMAGE)
     )
-    found = {problem: count for problem, count in counts.items() if count}
     if crowded_frames.height:
         found[f"frames with more than {MAX_DETECTIONS_PER_IMAGE} boxes"] = crowded_frames.height
     if found:
