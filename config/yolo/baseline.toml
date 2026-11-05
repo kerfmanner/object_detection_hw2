@@ -1,0 +1,21 @@
+# YOLO11s baseline: COCO-pretrained yolo11s at imgsz 1824 with Ultralytics default training hyperparameters
+arch = "yolo11s"  # Ultralytics model name; weights <arch>.pt: yolo11n, yolo11s, yolo11m, yolo11l, yolo11x
+init = "coco"  # pretrained weights: coco (Ultralytics COCO checkpoint <arch>.pt), the only supported value
+train_frames = "train_tuning"  # [frame_steps] key in config/data.toml: train_tuning (step 5) or train_final (step 2)
+imgsz = 1824  # train and inference input size in px, multiple of 32; the longer frame side is resized to it
+epochs = 0  # TODO: set after the timing run; training epochs, integer of at least 1
+batch_size = 0  # TODO: set after the timing run; images per batch, integer of at least 1, or -1 for Ultralytics AutoBatch; gradients accumulate over round(64 / batch_size) batches (Ultralytics nbs 64)
+optimizer = "AdamW"  # Ultralytics optimizer: SGD, MuSGD, Adam, Adamax, AdamW, NAdam, RAdam, RMSProp; set explicitly because "auto" switches from AdamW to MuSGD above 10,000 iterations
+lr = 0.000833  # initial learning rate (Ultralytics lr0); the value "auto" picks for AdamW with 8 classes, round(0.002 * 5 / (4 + 8), 6)
+momentum = 0.9  # AdamW beta1 (SGD momentum for SGD); the value "auto" picks
+warmup_bias_lr = 0.0  # bias learning rate at the start of warmup; "auto" sets 0.0 (Ultralytics default otherwise 0.1)
+close_mosaic = 10  # turn mosaic augmentation off for the last N epochs; 0 keeps it on (Ultralytics default 10)
+amp = true  # mixed precision training: true or false (Ultralytics default true)
+seed = 42  # Ultralytics training seed (data order, augmentation, new head weights)
+
+[inference]
+conf = 0.001  # minimum score of kept detections, in [0, 1]; low so that AP integrates the full precision-recall curve
+iou = 0.5  # NMS IoU threshold, at least 0.5; also used by the per-epoch Ultralytics validation
+max_det = 500  # maximum detections per frame, at most 500; also used by the per-epoch Ultralytics validation
+agnostic_nms = false  # class-agnostic NMS: false keeps per-class NMS; also used by the per-epoch Ultralytics validation
+warmup_images = 10  # untimed forward passes on the first frame before measuring ms/image

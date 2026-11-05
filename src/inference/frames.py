@@ -1,7 +1,14 @@
+from collections.abc import Callable
 from pathlib import Path
 
 import polars as pl
 import torch
+
+from src.inference.yolo import predict_yolo_frames
+
+FramePredictor = Callable[..., tuple[pl.DataFrame, float]]
+
+FAMILY_PREDICTORS: dict[str, FramePredictor] = {"yolo": predict_yolo_frames}
 
 
 def predict_frames(
@@ -13,11 +20,18 @@ def predict_frames(
         model: Detector from `build_model`.
         checkpoint_path: Path of the run's `best.pt`.
         images: Image table with `image_id`, `width`, `height`, and absolute `file_path`.
-        config: Resolved run configuration; its `[inference]` table sets the options.
+        config: Resolved run configuration; `run.family` selects the predictor and the
+            `[inference]` table sets the options.
 
     Returns:
         Predictions with `image_id`, 0-based `class_id`, `score`, and pixel `x`, `y`, `w`,
         `h` (top-left corner), at most 500 per frame, and the mean inference time in ms per
         image.
     """
-    raise NotImplementedError("Inference is added together with the first model family")
+    family = config["run"]["family"]
+    if family not in FAMILY_PREDICTORS:
+        raise ValueError(
+            f"No predictor registered for family {family!r}; "
+            f"registered families: {sorted(FAMILY_PREDICTORS)}"
+        )
+    return FAMILY_PREDICTORS[family](model, checkpoint_path, images, config)

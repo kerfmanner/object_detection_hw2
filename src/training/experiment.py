@@ -1,14 +1,18 @@
 import json
+import subprocess
 import tomllib
 from datetime import datetime
 from pathlib import Path
 
 import wandb
+from decouple import config
 
 BASELINE_STEM = "baseline"
 RUN_TIMESTAMP_FORMAT = "%Y%m%d-%H%M"
 CONFIG_FILE = "config.toml"
 TomlValue = str | int | float | bool | list | dict
+REPO_ROOT = Path(__file__).resolve().parents[2]
+KAGGLE_SETTING = "KAGGLE_KERNEL_RUN_TYPE"
 
 
 def merge_config(baseline: dict, override: dict, path: str = "") -> dict:
@@ -153,3 +157,67 @@ def init_wandb(config: dict, wandb_settings: dict, run_dir: Path | None) -> wand
         dir=run_dir,
         mode="disabled" if run_dir is None else None,
     )
+
+
+def read_git_state(repo_dir: Path) -> tuple[str, bool]:
+    """Read the checked-out commit and whether the working tree differs from it.
+
+    Args:
+        repo_dir: Directory inside the Git repository.
+
+    Returns:
+        The commit hash and whether tracked or untracked, not ignored, files have changes.
+    """
+    commit = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo_dir, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    status = subprocess.run(
+        ["git", "status", "--porcelain"], cwd=repo_dir, capture_output=True, text=True, check=True
+    ).stdout
+    return commit, bool(status.strip())
+
+
+def detect_machine() -> str:
+    """Name the machine of a run from the Kaggle notebook environment variable.
+
+    Returns:
+        `kaggle` inside a Kaggle notebook, `pc` otherwise.
+    """
+    return "kaggle" if config(KAGGLE_SETTING, default="") else "pc"
+
+
+def read_config_note(config_path: Path) -> str:
+    """Read the one-line comment that starts an experiment or baseline config.
+
+    Args:
+        config_path: Path of the config file.
+
+    Returns:
+        The comment text without the leading `#`.
+    """
+    first_line = config_path.read_text().partition("\n")[0]
+    if not first_line.startswith("#"):
+        raise ValueError(f"{config_path} must start with a one-line comment stating what it tests")
+    return first_line.removeprefix("#").strip()
+
+
+def describe_run(config: dict, repo_dir: Path) -> dict:
+    """Describe the config, code version, and machine of a training run for `metrics.json`.
+
+    Args:
+        config: Resolved configuration from `load_experiment_config`.
+        repo_dir: Directory inside the Git repository of the code.
+
+    Returns:
+        Dictionary with `config` (config path), `seed`, `commit`, `is_dirty`, `machine`, and
+        `notes` (the config's first-line comment).
+    """
+    commit, is_dirty = read_git_state(repo_dir)
+    return {
+        "config": config["run"]["config"],
+        "seed": config["seed"],
+        "commit": commit,
+        "is_dirty": is_dirty,
+        "machine": detect_machine(),
+        "notes": read_config_note(Path(config["run"]["config"])),
+    }

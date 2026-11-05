@@ -1,0 +1,4 @@
+# Timing run, not a reported experiment: one epoch with Ultralytics AutoBatch to measure epoch time and the batch size that fits in VRAM
+epochs = 1
+batch_size = -1
+close_mosaic = 0

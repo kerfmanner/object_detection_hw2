@@ -2,9 +2,11 @@ from collections.abc import Callable
 
 import torch
 
+from src.models.yolo import build_yolo
+
 ModelBuilder = Callable[[dict], torch.nn.Module]
 
-MODEL_BUILDERS: dict[str, ModelBuilder] = {}
+MODEL_BUILDERS: dict[str, ModelBuilder] = {"yolo": build_yolo}
 
 
 def build_model(config: dict) -> torch.nn.Module:

@@ -44,6 +44,23 @@ def select_frames(images: pl.DataFrame, frame_step: int) -> pl.DataFrame:
     return images.filter((pl.col("frame_id") - first_frame) % frame_step == 0)
 
 
+def select_smoke_frames(images: pl.DataFrame, data_config_path: Path) -> pl.DataFrame:
+    """Keep the frames of the smoke subset defined in the `[smoke]` table of the data config.
+
+    Args:
+        images: Image table with `clip` and `frame_id`.
+        data_config_path: Path of `config/data.toml`.
+
+    Returns:
+        The rows of the configured frames of the smoke train and val clips, in their order.
+    """
+    smoke = tomllib.loads(data_config_path.read_text())["smoke"]
+    return images.filter(
+        pl.col("clip").is_in([smoke["train_clip"], smoke["val_clip"]]),
+        pl.col("frame_id").is_in(smoke["frame_ids"]),
+    )
+
+
 def index_frame_rows(table: pl.DataFrame, image_ids: np.ndarray) -> np.ndarray:
     """Locate the rows of each frame in a table sorted by `image_id`.
 

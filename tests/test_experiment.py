@@ -1,3 +1,4 @@
+import subprocess
 import tomllib
 from datetime import datetime
 from pathlib import Path
@@ -6,12 +7,17 @@ import pytest
 
 from src.models.registry import build_model
 from src.training.experiment import (
+    KAGGLE_SETTING,
     create_run_dir,
+    describe_run,
+    detect_machine,
     format_toml,
     init_wandb,
     load_experiment_config,
     merge_config,
     name_experiment,
+    read_config_note,
+    read_git_state,
 )
 
 BASELINE_TOML = """# Faster R-CNN baseline
@@ -127,3 +133,49 @@ def test_unknown_family_raises_a_clear_error(family_dir: Path) -> None:
     config = load_experiment_config(family_dir / "baseline.toml")
     with pytest.raises(ValueError, match="No model builder registered for family 'faster_rcnn'"):
         build_model(config)
+
+
+def run_git(repo_dir: Path, *args: str) -> str:
+    command = ["git", "-c", "user.name=test", "-c", "user.email=test@example.com", *args]
+    return subprocess.run(command, cwd=repo_dir, capture_output=True, text=True, check=True).stdout
+
+
+def test_git_state_reports_the_commit_and_uncommitted_changes(tmp_path: Path) -> None:
+    run_git(tmp_path, "init", "--quiet")
+    (tmp_path / ".gitignore").write_text("runs/\n")
+    run_git(tmp_path, "add", ".gitignore")
+    run_git(tmp_path, "commit", "--quiet", "-m", "init")
+    commit = run_git(tmp_path, "rev-parse", "HEAD").strip()
+    (tmp_path / "runs").mkdir()
+    (tmp_path / "runs" / "metrics.json").write_text("{}")
+    assert read_git_state(tmp_path) == (commit, False)
+    (tmp_path / "new_config.toml").write_text("seed = 1\n")
+    assert read_git_state(tmp_path) == (commit, True)
+
+
+def test_machine_is_kaggle_only_inside_a_kaggle_notebook(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(KAGGLE_SETTING, raising=False)
+    assert detect_machine() == "pc"
+    monkeypatch.setenv(KAGGLE_SETTING, "Batch")
+    assert detect_machine() == "kaggle"
+
+
+def test_notes_come_from_the_first_line_comment(family_dir: Path) -> None:
+    override = family_dir / "lr_002.toml"
+    override.write_text("# Higher learning rate to test faster convergence\nlr = 0.02\n")
+    assert read_config_note(override) == "Higher learning rate to test faster convergence"
+    override.write_text("lr = 0.02\n")
+    with pytest.raises(ValueError, match="must start with a one-line comment"):
+        read_config_note(override)
+
+
+def test_run_description_has_the_shared_training_fields(
+    family_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv(KAGGLE_SETTING, raising=False)
+    config = load_experiment_config(family_dir / "baseline.toml")
+    description = describe_run(config, Path(__file__).parent)
+    assert set(description) == {"config", "seed", "commit", "is_dirty", "machine", "notes"}
+    assert description["notes"] == "Faster R-CNN baseline"
+    assert description["seed"] == 42 and description["machine"] == "pc"
+    assert len(description["commit"]) == 40
