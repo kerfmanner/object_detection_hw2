@@ -23,6 +23,8 @@
 8. Never read, print, or log secrets (`~/.netrc`, `~/.kaggle/kaggle.json`, `.env` values).
 9. Ask before adding a new dependency.
 10. Always cite external code and ideas with a link in a comment or Markdown cell next to the code that uses them. Prefer sources from `docs/literature.md`; when citing a new source, add it under "Other sources" there and fill its "Used in" column. 
+11. Planned experiments and the rubric's required items per checkpoint: `docs/experiment_ideas.md`. It is a plan, not a list of tasks; implement an experiment only when asked.
+
 
 ## Repository Structure
 
