@@ -1,0 +1,4 @@
+# Timing run, not a reported experiment: one epoch of the R50 baseline at batch 2 with gradient accumulation 2 (effective batch 4, the same optimizer steps per epoch), because batch 4 overflowed the 12 GB of the PC into shared system memory
+epochs = 1
+batch_size = 2
+grad_accum = 2

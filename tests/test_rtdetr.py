@@ -280,13 +280,16 @@ def test_optimizer_follows_the_rtdetr_recipe_parameter_groups(
 def test_baseline_and_timing_configs_are_valid_full_runs(baseline_config: dict) -> None:
     check_training_budget(baseline_config)
     assert (baseline_config["batch_size"], baseline_config["grad_accum"]) == (4, 1)
-    timing, timing_r18 = (
-        load_experiment_config(RTDETR_DIR / name) for name in ("timing.toml", "timing_r18.toml")
+    timing, timing_b2, timing_r18 = (
+        load_experiment_config(RTDETR_DIR / name)
+        for name in ("timing.toml", "timing_b2.toml", "timing_r18.toml")
     )
-    for config in (timing, timing_r18):
+    for config in (timing, timing_b2, timing_r18):
         check_training_budget(config)
-        assert (config["epochs"], config["batch_size"], config["grad_accum"]) == (1, 4, 1)
-    assert timing["arch"] == "PekingU/rtdetr_v2_r50vd"
+        assert config["epochs"] == 1
+        assert config["batch_size"] * config["grad_accum"] == 4
+    assert (timing_b2["batch_size"], timing_b2["grad_accum"]) == (2, 2)
+    assert timing["arch"] == timing_b2["arch"] == "PekingU/rtdetr_v2_r50vd"
     r18 = build_rtdetr(timing_r18)
     assert r18.detector.config.decoder_layers == 3
     assert list(r18.detector.config.encoder_in_channels) == [128, 256, 512]
