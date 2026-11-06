@@ -3,3 +3,4 @@ arch = "PekingU/rtdetr_v2_r18vd"
 revision = "5650961749fa93567c0d46fc7f43ea4f9e914107"
 epochs = 1
 batch_size = 4
+grad_accum = 1

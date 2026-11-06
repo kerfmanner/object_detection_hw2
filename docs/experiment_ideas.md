@@ -76,7 +76,7 @@ Required:
 Ideas:
 - **Number of queries**: the default 300 already exceeds the densest frame (180 objects; no frame above 300) [§6.1, §6.2]. Test 300 versus a larger value only if recall on dense frames is low.
 - Matcher cost weights (class / bbox / GIoU); denoising on vs off; separate backbone and transformer learning rates.
-- Checkpoint: R18 (faster) vs R50 (more accurate). TODO: choose.
+- Checkpoint: R50vd is the baseline (timing on the PC: 744 s/epoch at batch 2 × accumulation 2, 7.1 GB, 7 epochs in the budget). R18vd (263 s/epoch at batch 4, 5.4 GB, 20 epochs in the budget) is a later experiment: more epochs for a weaker backbone. The official R18 recipe also trains the whole backbone at the main LR with BatchNorm unfrozen.
 
 ## Your pipeline
 

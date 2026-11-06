@@ -220,7 +220,7 @@ Tests run on CPU against the smoke subset and never need a GPU or the full datas
     - Two-stage: torchvision Faster R-CNN ResNet50-FPN v2.
     - One-stage anchor-based: torchvision RetinaNet ResNet50-FPN v2.
     - Anchor-free: YOLO11 (yolo11s), batch size 2.
-    - Query-based: Hugging Face `transformers` RT-DETRv2, COCO-pretrained (TODO: exact checkpoint, e.g. R50 backbone).
+    - Query-based: Hugging Face `transformers` RT-DETRv2 R50vd (`PekingU/rtdetr_v2_r50vd`), COCO-pretrained, batch size 2 with gradient accumulation 2 (effective 4); batch 4 exceeds 12 GB.
     - The tuned two-stage model is the reference for later families.
 8. Report only metrics from the shared evaluator in `src/evaluation/`. Framework metrics (e.g. Ultralytics `val`) are for monitoring only.
 9. Experiment logging:

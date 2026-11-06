@@ -1,3 +1,4 @@
-# Timing run, not a reported experiment: one epoch of the R50 baseline at the suggested batch size to measure epoch time and peak GPU memory (gpu_memory_gb in metrics.json)
+# Timing run, not a reported experiment: one epoch of R50 at batch 4 to measure epoch time and peak GPU memory (gpu_memory_gb in metrics.json); on the PC it overflowed the 12 GB into shared system memory (about 7 s/batch) and was aborted, see timing_b2.toml
 epochs = 1
 batch_size = 4
+grad_accum = 1

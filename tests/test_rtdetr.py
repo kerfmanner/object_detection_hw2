@@ -279,7 +279,7 @@ def test_optimizer_follows_the_rtdetr_recipe_parameter_groups(
 
 def test_baseline_and_timing_configs_are_valid_full_runs(baseline_config: dict) -> None:
     check_training_budget(baseline_config)
-    assert (baseline_config["batch_size"], baseline_config["grad_accum"]) == (4, 1)
+    assert (baseline_config["batch_size"], baseline_config["grad_accum"]) == (2, 2)
     timing, timing_b2, timing_r18 = (
         load_experiment_config(RTDETR_DIR / name)
         for name in ("timing.toml", "timing_b2.toml", "timing_r18.toml")
@@ -371,7 +371,7 @@ def test_full_run_writes_checkpoints_and_the_training_section(
     monkeypatch.setenv("WANDB_MODE", "disabled")
     baseline = load_experiment_config(RTDETR_BASELINE)
     logging_config = baseline["logging"] | {"log_interval": 1, "sample_frames": 1}
-    budget = {"epochs": 2, "batch_size": 4, "num_workers": 0}
+    budget = {"epochs": 2, "batch_size": 4, "grad_accum": 1, "num_workers": 0}
     config = baseline | TINY_INPUT | budget | {"logging": logging_config}
     train_frames = VisDroneDataset(synthetic_annotations, "train", frame_step=1)
     steps_per_epoch = -(-len(train_frames) // config["batch_size"])

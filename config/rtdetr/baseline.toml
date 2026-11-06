@@ -6,9 +6,9 @@ trainable_backbone_layers = 4  # trainable backbone units counted from the last,
 train_frames = "train_tuning"  # [frame_steps] key in config/data.toml: train_tuning (step 5) or train_final (step 2)
 min_size = 1024  # shorter frame side after resizing, in px, rounded to the nearest px; every 16:9 frame becomes 1024 x 1820 px, the object scale of the torchvision families (not the processor's fixed 640 x 640)
 max_size = 1824  # upper bound of the longer side after resizing, in px; resized frames are zero-padded at the bottom and right to a multiple of 32 px
-epochs = 10  # TODO: set after the timing run to floor(5400 / epoch_seconds), the 1.5 GPU hour baseline budget; suggested 10, near Faster R-CNN's 538 s/epoch at the same input size. Training epochs, integer of at least 1
-batch_size = 4  # TODO: set after the timing run from gpu_memory_gb (below the 12 GB of the PC); suggested 4, as the torchvision families. Frames per forward pass, integer of at least 1
-grad_accum = 1  # batches whose gradients are summed per optimizer step, integer of at least 1; effective batch size = batch_size * grad_accum
+epochs = 7  # training epochs, integer of at least 1; floor(5400 / 744) for the 1.5 GPU hour baseline budget, from the timing_b2 run (744 s/epoch on the PC)
+batch_size = 2  # frames per forward pass, integer of at least 1; 2 peaks at 7.1 GB on the PC (timing_b2), while 4 overflowed its 12 GB into shared system memory (timing)
+grad_accum = 2  # batches whose gradients are summed per optimizer step, integer of at least 1; effective batch size = batch_size * grad_accum = 4, as the torchvision families
 num_workers = 4  # DataLoader worker processes decoding frames, integer of at least 0
 lr = 0.0001  # AdamW learning rate of the encoder, decoder, and heads, positive; official RT-DETRv2 recipe value (at batch 16, not rescaled)
 backbone_lr = 0.00001  # AdamW learning rate of the backbone parameters, at least 0; official R50 recipe value
@@ -17,7 +17,7 @@ norm_weight_decay = 0.0  # AdamW weight decay of the BatchNorm and LayerNorm par
 betas = [0.9, 0.999]  # AdamW beta1 and beta2; official recipe values
 grad_clip_norm = 0.1  # maximum L2 norm of all gradients before an optimizer step, 0 disables clipping; official recipe clip_max_norm 0.1
 schedule = "constant"  # LR schedule after warmup: constant, the only supported value (the official recipe's MultiStepLR milestone 1000 is never reached in its 72 epochs either)
-warmup_iters = 2000  # linear LR warmup over this many optimizer steps, factor min(1, (step + 1) / warmup_iters), integer of at least 0; official LinearWarmup 2000; about 1.6 epochs at step 5 and batch 4
+warmup_iters = 2000  # linear LR warmup over this many optimizer steps, factor min(1, (step + 1) / warmup_iters), integer of at least 0; official LinearWarmup 2000; about 1.6 epochs at step 5 and effective batch 4
 ema = false  # exponential moving average of the weights: false, the only supported value (the official recipe uses EMA decay 0.9999)
 freeze_batchnorm = true  # BatchNorm layers outside the backbone (encoder, input projections) keep their COCO running statistics (eval mode) and are not trained; false trains them on batches of batch_size frames; backbone BatchNorm is always frozen (checkpoint config freeze_backbone_batch_norms)
 amp = true  # mixed precision training on CUDA: true or false; CPU always trains in float32; inference is float32
