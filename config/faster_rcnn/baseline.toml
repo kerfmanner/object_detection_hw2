@@ -12,10 +12,12 @@ num_workers = 4  # DataLoader worker processes decoding frames, integer of at le
 lr = 0.005  # the torchvision reference LR 0.02 at batch 16 scaled linearly to effective batch 4 (https://github.com/pytorch/vision/tree/main/references/detection, https://arxiv.org/abs/1706.02677); training was stable at this LR in the timing run. SGD learning rate, positive
 momentum = 0.9  # SGD momentum
 weight_decay = 0.0001  # SGD L2 weight decay on all trainable parameters (torchvision reference default)
-schedule = "constant"  # LR schedule: constant, the only supported value
+schedule = "constant"  # LR schedule: constant, or cosine (decay from lr to 0 over all optimizer steps of the run, updated after every step)
 warmup_iters = 0  # LR warmup iterations: 0, the only supported value
+grad_clip_norm = 0.0  # maximum L2 norm of all gradients before an optimizer step; 0 disables clipping
 freeze_batchnorm = true  # BatchNorm layers keep their COCO running statistics (eval mode) and their weights and biases are not trained; false trains them on batches of batch_size frames
 amp = true  # mixed precision training on CUDA: true or false; CPU always trains in float32; inference is float32
+amp_dtype = "float16"  # autocast dtype when amp is true: float16 (with gradient scaling) or bfloat16 (no scaling; float32 on GPUs without native bfloat16)
 seed = 42  # seed of the new box predictor, the shuffling order, and RPN and RoI sampling
 
 [rpn]
@@ -34,11 +36,13 @@ positive_fraction = 0.5  # maximum fraction of positives among the sampled ancho
 score_thresh = 0.0  # minimum objectness probability of kept proposals
 
 [roi_heads]
-# Second stage training; all values are the torchvision defaults
+# Second stage training; all values are the torchvision defaults (box_loss smooth_l1 is torchvision's loss)
 fg_iou_thresh = 0.5  # proposals with IoU at least this with a GT box are positives
 bg_iou_thresh = 0.5  # proposals with IoU below this with every GT box are background
 batch_size_per_image = 512  # proposals sampled per image for the box head loss
 positive_fraction = 0.25  # maximum fraction of positives among the sampled proposals
+box_loss = "smooth_l1"  # box regression loss: smooth_l1 (torchvision, beta 1/9 on the encoded offsets) or giou (GIoU of the decoded boxes, https://arxiv.org/abs/1902.09630); set by the training loop, prediction does not read it
+giou_loss_weight = 10.0  # factor of the GIoU loss, used only with box_loss giou; mmdetection's Faster R-CNN GIoU config (https://github.com/open-mmlab/mmdetection/blob/main/configs/faster_rcnn/faster-rcnn_r50_fpn_giou_1x_coco.py), which normalizes the loss like torchvision, by the number of sampled RoIs
 
 [inference]
 score_thresh = 0.001  # minimum class score of kept detections, in [0, 1]; low so that AP integrates the full precision-recall curve (torchvision default 0.05)

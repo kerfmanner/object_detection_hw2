@@ -8,7 +8,10 @@ from torchvision.io import ImageReadMode, decode_image
 from tqdm.auto import tqdm
 
 from src.inference.detections import build_prediction_table
-from src.models.torchvision_labels import shift_detections_from_torchvision
+from src.models.torchvision_labels import (
+    TORCHVISION_FAMILIES,
+    shift_detections_from_torchvision,
+)
 
 MODEL_STATE_KEY = "model"
 
@@ -64,20 +67,28 @@ def convert_torchvision_detections(detections: dict[str, torch.Tensor]) -> np.nd
 
 
 def detect_frames(
-    model: torch.nn.Module, images: pl.DataFrame, device: torch.device, warmup_images: int
+    model: torch.nn.Module,
+    images: pl.DataFrame,
+    device: torch.device,
+    warmup_images: int,
+    has_background_label: bool,
 ) -> tuple[pl.DataFrame, float]:
-    """Detect objects on every frame of an image table with a torchvision detector, batch 1.
+    """Detect objects on every frame of an image table with a torchvision-style detector.
 
-    The model is put in eval mode on `device`. The time per image covers moving the frame to
-    the device, the uint8 to float conversion, and the forward pass with resizing and NMS,
-    with the GPU synchronized before and after; decoding the file is not timed, as for
-    YOLO. `warmup_images` untimed passes on the first frame come first.
+    Frames go through the model one at a time. The model is put in eval mode on `device`.
+    The time per image covers moving the frame to the device, the uint8 to float conversion,
+    and the forward pass with resizing and post-processing (NMS for torchvision), with the
+    GPU synchronized before and after; decoding the file is not timed, as for YOLO.
+    `warmup_images` untimed passes on the first frame come first.
 
     Args:
-        model: torchvision detector with background label 0, already on `device`.
+        model: Detector taking a list of float frames and returning `boxes`, `scores`, and
+            `labels` per frame, already on `device`.
         images: Image table with `image_id` and absolute `file_path`.
         device: Device of the model.
         warmup_images: Number of untimed passes before measuring.
+        has_background_label: Whether the model predicts torchvision labels with background
+            0, which are shifted back to 0-based class ids; otherwise labels are 0-based.
 
     Returns:
         Predictions with `image_id`, 0-based `class_id`, `score`, and pixel `x`, `y`, `w`,
@@ -100,7 +111,9 @@ def detect_frames(
             if is_cuda:
                 torch.cuda.synchronize()
             seconds.append(time.perf_counter() - started)
-            [detections] = shift_detections_from_torchvision(outputs)
+            if has_background_label:
+                outputs = shift_detections_from_torchvision(outputs)
+            [detections] = outputs
             frame_detections.append(convert_torchvision_detections(detections))
     predictions = build_prediction_table(images["image_id"], frame_detections)
     return predictions, 1000 * float(np.mean(seconds))
@@ -109,16 +122,17 @@ def detect_frames(
 def predict_torchvision_frames(
     model: torch.nn.Module, checkpoint_path: Path, images: pl.DataFrame, config: dict
 ) -> tuple[pl.DataFrame, float]:
-    """Predict every frame of an image table with a trained torchvision checkpoint.
+    """Predict every frame of an image table with a checkpoint of the shared training loop.
 
-    The score threshold, NMS IoU, and detections per frame of `[inference]` were set in the
-    model by its builder.
+    Used for the torchvision families and RT-DETR. The score threshold, NMS IoU, and
+    detections per frame of `[inference]` were set in the model by its builder.
 
     Args:
         model: Detector from `build_model` with the run's configuration.
-        checkpoint_path: Path of a checkpoint written by the torchvision training loop.
+        checkpoint_path: Path of a checkpoint written by the shared training loop.
         images: Image table with `image_id` and absolute `file_path`.
-        config: Resolved run configuration with `[inference]` `warmup_images`.
+        config: Resolved run configuration with `run.family` and `[inference]`
+            `warmup_images`.
 
     Returns:
         Predictions with `image_id`, 0-based `class_id`, `score`, and pixel `x`, `y`, `w`,
@@ -128,4 +142,10 @@ def predict_torchvision_frames(
     model.load_state_dict(checkpoint[MODEL_STATE_KEY])
     device = select_device()
     model.to(device)
-    return detect_frames(model, images, device, config["inference"]["warmup_images"])
+    return detect_frames(
+        model,
+        images,
+        device,
+        config["inference"]["warmup_images"],
+        config["run"]["family"] in TORCHVISION_FAMILIES,
+    )

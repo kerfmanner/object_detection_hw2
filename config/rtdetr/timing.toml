@@ -1,0 +1,3 @@
+# Timing run, not a reported experiment: one epoch of the R50 baseline at the suggested batch size to measure epoch time and peak GPU memory (gpu_memory_gb in metrics.json)
+epochs = 1
+batch_size = 4

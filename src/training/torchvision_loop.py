@@ -3,6 +3,7 @@ import logging
 import math
 import tempfile
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -11,6 +12,7 @@ import polars as pl
 import torch
 import wandb
 from torch.utils.data import DataLoader
+from torchvision.models.detection.faster_rcnn import FasterRCNN
 from tqdm.auto import tqdm
 
 from src.data.annotations import AnnotationTables, load_annotations, load_split_clips
@@ -24,17 +26,19 @@ from src.inference.torchvision_detectors import (
     detect_frames,
     select_device,
 )
+from src.models.faster_rcnn import set_box_regression_loss
 from src.models.registry import build_model
-from src.models.torchvision_labels import shift_targets_to_torchvision
+from src.models.torchvision_labels import TORCHVISION_FAMILIES, shift_targets_to_torchvision
 from src.submission.writer import format_submission
 from src.training.experiment import REPO_ROOT, TRAIN_FRAME_STEPS, describe_run
+from src.training.rtdetr import build_rtdetr_optimizer
 from src.visualization.frames import plot_ground_truth_and_predictions
 
 logger = logging.getLogger(__name__)
 
 BEST_CHECKPOINT = "best.pt"
 LAST_CHECKPOINT = "last.pt"
-SUPPORTED_SCHEDULE = "constant"
+SUPPORTED_SCHEDULES = ("constant", "cosine")
 MONITORED_METRICS = ("map", "map50", "map75", "ap_small")
 BYTES_PER_GB = 1024**3
 SMOKE_FRAMES_PER_SPLIT = 2
@@ -48,6 +52,7 @@ SMOKE_OVERRIDES = {
 }
 SMOKE_WARMUP_IMAGES = 1
 SMOKE_LOGGING = {"log_interval": 1, "sample_frames": 1}
+AUTOCAST_DTYPES = {"float16": torch.float16, "bfloat16": torch.bfloat16}
 Batch = tuple[list[torch.Tensor], list[dict[str, torch.Tensor]]]
 
 
@@ -111,19 +116,19 @@ def set_train_mode(model: torch.nn.Module, is_batchnorm_frozen: bool) -> None:
 
 
 def build_optimizer(model: torch.nn.Module, config: dict) -> torch.optim.SGD:
-    """Build SGD with momentum over the trainable parameters, at a constant LR without warmup.
+    """Build SGD with momentum over the trainable parameters, for a schedule without warmup.
 
     Args:
         model: Detector whose frozen parameters have `requires_grad` False.
-        config: Resolved configuration with `lr`, `momentum`, `weight_decay`, `schedule`,
-            and `warmup_iters`.
+        config: Resolved configuration with `lr`, `momentum`, `weight_decay`, `schedule`
+            (`constant` or `cosine`, applied by `build_lr_scheduler`), and `warmup_iters`.
 
     Returns:
         The optimizer.
     """
-    if config["schedule"] != SUPPORTED_SCHEDULE or config["warmup_iters"] != 0:
+    if config["schedule"] not in SUPPORTED_SCHEDULES or config["warmup_iters"] != 0:
         raise ValueError(
-            f"Only schedule {SUPPORTED_SCHEDULE!r} with warmup_iters 0 is supported, got "
+            f"Only schedules {SUPPORTED_SCHEDULES} with warmup_iters 0 are supported, got "
             f"{config['schedule']!r} with {config['warmup_iters']}"
         )
     return torch.optim.SGD(
@@ -134,10 +139,88 @@ def build_optimizer(model: torch.nn.Module, config: dict) -> torch.optim.SGD:
     )
 
 
+OPTIMIZER_BUILDERS: dict[str, Callable[[torch.nn.Module, dict], torch.optim.Optimizer]] = {
+    "faster_rcnn": build_optimizer,
+    "retinanet": build_optimizer,
+    "rtdetr": build_rtdetr_optimizer,
+}
+
+
+def build_lr_scheduler(
+    optimizer: torch.optim.Optimizer, schedule: str, warmup_iters: int, total_steps: int
+) -> torch.optim.lr_scheduler.LambdaLR:
+    """Build the LR schedule of a run: an optional linear warmup times a constant or cosine.
+
+    Optimizer step `i` (0-based) uses the factor `min(1, (i + 1) / warmup_iters)` of each
+    group's LR, as the official RT-DETRv2 `LinearWarmup`
+    (https://github.com/lyuwenyu/RT-DETR/blob/main/rtdetrv2_pytorch/src/optim/warmup.py);
+    `warmup_iters` 0 keeps that factor 1. The `cosine` schedule multiplies it by
+    `(1 + cos(pi * i / total_steps)) / 2`, the cosine decay of SGDR without restarts
+    (https://arxiv.org/abs/1608.03983), used for detectors in
+    https://arxiv.org/abs/1902.04103: step 0 trains at the full LR, and the LR reaches 0
+    after the last step.
+
+    Args:
+        optimizer: Optimizer whose groups hold their target LR.
+        schedule: `constant` or `cosine`.
+        warmup_iters: Number of optimizer steps of the warmup, at least 0.
+        total_steps: Number of optimizer steps of the whole run, at least 1.
+
+    Returns:
+        Scheduler to step after every optimizer step.
+    """
+    is_cosine = schedule == "cosine"
+
+    def compute_lr_factor(step: int) -> float:
+        warmup = min(1.0, (step + 1) / warmup_iters) if warmup_iters else 1.0
+        decay = (1 + math.cos(math.pi * step / total_steps)) / 2 if is_cosine else 1.0
+        return warmup * decay
+
+    return torch.optim.lr_scheduler.LambdaLR(optimizer, compute_lr_factor)
+
+
+def select_autocast_dtype(config: dict, device: torch.device) -> torch.dtype | None:
+    """Select the mixed precision dtype of training, or None for float32.
+
+    Mixed precision runs on CUDA only. bfloat16 needs native GPU support (not the emulation
+    `torch.cuda.is_bf16_supported` counts by default); without it training stays float32.
+
+    Args:
+        config: Resolved configuration with `amp` and `amp_dtype` (`float16` or `bfloat16`).
+        device: Device to train on.
+
+    Returns:
+        The autocast dtype, or None when training in float32.
+    """
+    if config["amp_dtype"] not in AUTOCAST_DTYPES:
+        raise ValueError(
+            f"amp_dtype must be one of {sorted(AUTOCAST_DTYPES)}, got {config['amp_dtype']!r}"
+        )
+    dtype = AUTOCAST_DTYPES[config["amp_dtype"]]
+    if not config["amp"] or device.type != "cuda":
+        return None
+    if dtype == torch.bfloat16 and not torch.cuda.is_bf16_supported(including_emulation=False):
+        return None
+    return dtype
+
+
+def describe_precision(dtype: torch.dtype | None) -> str:
+    """Name the training precision for logs and `metrics.json`.
+
+    Args:
+        dtype: Autocast dtype from `select_autocast_dtype`, or None.
+
+    Returns:
+        `float16`, `bfloat16`, or `float32`.
+    """
+    return "float32" if dtype is None else str(dtype).removeprefix("torch.")
+
+
 def train_one_epoch(
     model: torch.nn.Module,
     loader: DataLoader,
     optimizer: torch.optim.Optimizer,
+    scheduler: torch.optim.lr_scheduler.LRScheduler,
     scaler: torch.amp.GradScaler,
     config: dict,
     device: torch.device,
@@ -148,17 +231,20 @@ def train_one_epoch(
 
     Each batch loss is divided by `grad_accum`, and the gradients of that many consecutive
     batches are summed before an optimizer step; a last incomplete group also makes a step.
-    Every `log_interval` batches the mean losses and the LR go to W&B under `iter/`, against
-    the `iteration` (batch) counter. With `freeze_batchnorm`, BatchNorm layers stay in eval
-    mode, so their running statistics do not change.
+    Before a step, the gradients are clipped to the L2 norm `grad_clip_norm` (0 disables);
+    after it, the scheduler steps. Target labels are shifted for torchvision families only.
+    Every `log_interval` batches the mean losses and the LR of the first parameter group go
+    to W&B under `iter/`, against the `iteration` (batch) counter. With `freeze_batchnorm`,
+    BatchNorm layers stay in eval mode, so their running statistics do not change.
 
     Args:
-        model: torchvision detector on `device`.
+        model: Detector of the shared loop (torchvision or wrapped RT-DETR) on `device`.
         loader: DataLoader with `collate_detection_batch` over a `VisDroneDataset`.
-        optimizer: Optimizer from `build_optimizer`.
-        scaler: Gradient scaler, enabled when training with mixed precision.
-        config: Resolved configuration with `grad_accum`, `freeze_batchnorm`, and
-            `[logging]` `log_interval`.
+        optimizer: Optimizer from the family's `OPTIMIZER_BUILDERS` entry.
+        scheduler: LR scheduler from `build_lr_scheduler`.
+        scaler: Gradient scaler, enabled when training in float16.
+        config: Resolved configuration with `run.family`, `grad_accum`, `grad_clip_norm`,
+            `amp`, `amp_dtype`, `freeze_batchnorm`, and `[logging]` `log_interval`.
         device: Device of the model.
         wandb_run: W&B run for the loss curves.
         iteration: Number of batches trained before this epoch.
@@ -169,16 +255,21 @@ def train_one_epoch(
     """
     set_train_mode(model, config["freeze_batchnorm"])
     grad_accum, log_interval = config["grad_accum"], config["logging"]["log_interval"]
+    grad_clip_norm = config["grad_clip_norm"]
+    autocast_dtype = select_autocast_dtype(config, device)
+    has_background_label = config["run"]["family"] in TORCHVISION_FAMILIES
+    parameters = [p for group in optimizer.param_groups for p in group["params"]]
     epoch_sums: dict[str, float] = {}
     interval_sums: dict[str, float] = {}
     optimizer.zero_grad(set_to_none=True)
     for batch_index, (frames, targets) in enumerate(tqdm(loader, desc="Training", unit="batch")):
         inputs = convert_frames_to_inputs(frames, device)
+        model_targets = shift_targets_to_torchvision(targets) if has_background_label else targets
         device_targets = [
             {key: value.to(device, non_blocking=True) for key, value in target.items()}
-            for target in shift_targets_to_torchvision(targets)
+            for target in model_targets
         ]
-        with torch.autocast(device.type, enabled=scaler.is_enabled()):
+        with torch.autocast(device.type, dtype=autocast_dtype, enabled=autocast_dtype is not None):
             losses = model(inputs, device_targets)
         loss = sum(losses.values(), torch.zeros((), device=device))
         values = {"loss": loss.item()} | {name: value.item() for name, value in losses.items()}
@@ -186,8 +277,12 @@ def train_one_epoch(
             raise RuntimeError(f"Non-finite training loss at batch {iteration + 1}: {values}")
         scaler.scale(loss / grad_accum).backward()
         if (batch_index + 1) % grad_accum == 0 or batch_index + 1 == len(loader):
+            if grad_clip_norm > 0:
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(parameters, grad_clip_norm)
             scaler.step(optimizer)
             scaler.update()
+            scheduler.step()
             optimizer.zero_grad(set_to_none=True)
         iteration += 1
         for name, value in values.items():
@@ -263,11 +358,15 @@ def fit_torchvision_detector(
     device: torch.device,
     wandb_run: wandb.Run,
 ) -> tuple[list[dict], int]:
-    """Train a torchvision detector, monitor it after every epoch, and save its checkpoints.
+    """Train a detector of the shared loop, monitor it after every epoch, and save checkpoints.
 
     The global RNG and the shuffling generator are seeded with `seed`. With
     `freeze_batchnorm`, BatchNorm parameters are left out of the optimizer and BatchNorm
-    layers keep their pretrained running statistics. Each epoch trains
+    layers keep their pretrained running statistics. Faster R-CNN gets the box regression
+    loss of `[roi_heads]` (`set_box_regression_loss`). The family's optimizer gets the LR
+    schedule of `build_lr_scheduler` over all optimizer steps of the run (`epochs` times the
+    batches per epoch divided by `grad_accum`, rounded up); float16 training scales the
+    loss. Each epoch trains
     on shuffled batches of `batch_size` frames (`train_one_epoch`), then predicts the
     monitoring frames one at a time in eval mode and scores them with the shared evaluator.
     `last.pt` is written after every epoch and `best.pt` whenever the monitoring mAP beats
@@ -275,10 +374,12 @@ def fit_torchvision_detector(
     `epoch`. The epoch record and a few frames with GT and predicted boxes go to W&B.
 
     Args:
-        model: torchvision detector with background label 0.
-        config: Resolved configuration with `epochs`, `batch_size`, `num_workers`, `amp`,
-            `seed`, `freeze_batchnorm`, the optimizer fields of `build_optimizer`, and the
-            `[logging]` table.
+        model: torchvision detector with background label 0, or wrapped RT-DETR.
+        config: Resolved configuration with `run.family`, `epochs`, `batch_size`,
+            `num_workers`, `grad_accum`, `amp`, `amp_dtype`, `grad_clip_norm`, `seed`,
+            `freeze_batchnorm`, `schedule`, `warmup_iters`, the fields of the family's
+            optimizer builder, the `[roi_heads]` table for Faster R-CNN, and the `[logging]`
+            table.
         train_dataset: Training frames.
         monitor_tables: Annotation tables whose `images` are the monitoring val frames.
         checkpoint_dir: Existing directory for `best.pt` and `last.pt`.
@@ -302,12 +403,21 @@ def fit_torchvision_detector(
         persistent_workers=num_workers > 0,
         generator=torch.Generator().manual_seed(config["seed"]),
     )
+    if isinstance(model, FasterRCNN):
+        set_box_regression_loss(model, config["roi_heads"])
     model.to(device)
     if config["freeze_batchnorm"]:
         freeze_batchnorm(model)
-    optimizer = build_optimizer(model, config)
+    family = config["run"]["family"]
+    optimizer = OPTIMIZER_BUILDERS[family](model, config)
+    total_steps = config["epochs"] * math.ceil(len(loader) / config["grad_accum"])
+    scheduler = build_lr_scheduler(
+        optimizer, config["schedule"], config["warmup_iters"], total_steps
+    )
     is_cuda = device.type == "cuda"
-    scaler = torch.amp.GradScaler(device.type, enabled=config["amp"] and is_cuda)
+    autocast_dtype = select_autocast_dtype(config, device)
+    logger.info("Training precision %s", describe_precision(autocast_dtype))
+    scaler = torch.amp.GradScaler(device.type, enabled=autocast_dtype == torch.float16)
     logging_config = config["logging"]
     sample_images = select_sample_frames(monitor_tables.images, logging_config["sample_frames"])
     for metric, step_metric in (("iter/*", "iteration"), ("train/*", "epoch"), ("val/*", "epoch")):
@@ -318,10 +428,16 @@ def fit_torchvision_detector(
         if is_cuda:
             torch.cuda.reset_peak_memory_stats(device)
         losses, iteration = train_one_epoch(
-            model, loader, optimizer, scaler, config, device, wandb_run, iteration
+            model, loader, optimizer, scheduler, scaler, config, device, wandb_run, iteration
         )
         gpu_memory_gb = torch.cuda.max_memory_allocated(device) / BYTES_PER_GB if is_cuda else None
-        predictions, _ = detect_frames(model, monitor_tables.images, device, warmup_images=0)
+        predictions, _ = detect_frames(
+            model,
+            monitor_tables.images,
+            device,
+            warmup_images=0,
+            has_background_label=family in TORCHVISION_FAMILIES,
+        )
         metrics = evaluate_detections(monitor_tables, "val", predictions)
         val_map = metrics["map"]
         if val_map is None:
@@ -414,7 +530,7 @@ def train_torchvision_detector(
     run_dir: Path | None,
     wandb_run: wandb.Run,
 ) -> None:
-    """Train a torchvision detector on the adopted split and record the run in its directory.
+    """Train a detector of the shared loop on the adopted split and record the run.
 
     Trains on the `train_frames` step of the train clips and monitors on the
     `val_monitoring` step of the val clips (`fit_torchvision_detector`), writing `best.pt`
@@ -439,9 +555,10 @@ def train_torchvision_detector(
     train_dataset = VisDroneDataset(tables, "train", train_step)
     val_images = tables.images.filter(pl.col("split") == "val")
     monitor_tables = tables._replace(images=select_frames(val_images, val_step))
+    device = select_device()
     started = time.perf_counter()
     history, best_epoch = fit_torchvision_detector(
-        model, config, train_dataset, monitor_tables, run_dir, select_device(), wandb_run
+        model, config, train_dataset, monitor_tables, run_dir, device, wandb_run
     )
     gpu_hours = (time.perf_counter() - started) / 3600
     training = describe_run(config, REPO_ROOT) | {
@@ -451,6 +568,7 @@ def train_torchvision_detector(
         "batch_size": config["batch_size"],
         "grad_accum": config["grad_accum"],
         "effective_batch_size": config["batch_size"] * config["grad_accum"],
+        "precision": describe_precision(select_autocast_dtype(config, device)),
         "gpu_hours": gpu_hours,
         "wandb_url": wandb_run.url,
         "history": history,

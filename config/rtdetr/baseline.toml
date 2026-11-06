@@ -1,0 +1,59 @@
+# RT-DETRv2 baseline: COCO-pretrained R50vd, AdamW per the RT-DETRv2 recipe with linear warmup then a constant LR, no EMA, no augmentation, frozen BatchNorm, checkpoint default queries, denoising, matcher, and losses
+arch = "PekingU/rtdetr_v2_r50vd"  # Hugging Face checkpoint: PekingU/rtdetr_v2_r50vd or PekingU/rtdetr_v2_r18vd; both COCO-trained from an ImageNet-pretrained backbone (https://huggingface.co/PekingU/rtdetr_v2_r50vd)
+revision = "282494075698cab9faa1096ae26856890030c817"  # Hugging Face commit of the checkpoint, pinned so that runs stay reproducible
+init = "coco"  # pretrained weights: coco (the arch checkpoint), the only supported value; the encoder and decoder class heads and the denoising label embedding are new
+trainable_backbone_layers = 4  # trainable backbone units counted from the last, 0 to 5 (stem and 4 ResNet stages, as in torchvision); 4 freezes only the stem, as freeze_at 0 in the official R50 recipe
+train_frames = "train_tuning"  # [frame_steps] key in config/data.toml: train_tuning (step 5) or train_final (step 2)
+min_size = 1024  # shorter frame side after resizing, in px, rounded to the nearest px; every 16:9 frame becomes 1024 x 1820 px, the object scale of the torchvision families (not the processor's fixed 640 x 640)
+max_size = 1824  # upper bound of the longer side after resizing, in px; resized frames are zero-padded at the bottom and right to a multiple of 32 px
+epochs = 10  # TODO: set after the timing run to floor(5400 / epoch_seconds), the 1.5 GPU hour baseline budget; suggested 10, near Faster R-CNN's 538 s/epoch at the same input size. Training epochs, integer of at least 1
+batch_size = 4  # TODO: set after the timing run from gpu_memory_gb (below the 12 GB of the PC); suggested 4, as the torchvision families. Frames per forward pass, integer of at least 1
+grad_accum = 1  # batches whose gradients are summed per optimizer step, integer of at least 1; effective batch size = batch_size * grad_accum
+num_workers = 4  # DataLoader worker processes decoding frames, integer of at least 0
+lr = 0.0001  # AdamW learning rate of the encoder, decoder, and heads, positive; official RT-DETRv2 recipe value (at batch 16, not rescaled)
+backbone_lr = 0.00001  # AdamW learning rate of the backbone parameters, at least 0; official R50 recipe value
+weight_decay = 0.0001  # AdamW decoupled weight decay of all trainable parameters except the norm layers below; official recipe value
+norm_weight_decay = 0.0  # AdamW weight decay of the BatchNorm and LayerNorm parameters outside the backbone; official recipe value 0
+betas = [0.9, 0.999]  # AdamW beta1 and beta2; official recipe values
+grad_clip_norm = 0.1  # maximum L2 norm of all gradients before an optimizer step, 0 disables clipping; official recipe clip_max_norm 0.1
+schedule = "constant"  # LR schedule after warmup: constant, the only supported value (the official recipe's MultiStepLR milestone 1000 is never reached in its 72 epochs either)
+warmup_iters = 2000  # linear LR warmup over this many optimizer steps, factor min(1, (step + 1) / warmup_iters), integer of at least 0; official LinearWarmup 2000; about 1.6 epochs at step 5 and batch 4
+ema = false  # exponential moving average of the weights: false, the only supported value (the official recipe uses EMA decay 0.9999)
+freeze_batchnorm = true  # BatchNorm layers outside the backbone (encoder, input projections) keep their COCO running statistics (eval mode) and are not trained; false trains them on batches of batch_size frames; backbone BatchNorm is always frozen (checkpoint config freeze_backbone_batch_norms)
+amp = true  # mixed precision training on CUDA: true or false; CPU always trains in float32; inference is float32
+amp_dtype = "bfloat16"  # autocast dtype when amp is true: bfloat16 (no gradient scaling; float32 on GPUs without native bfloat16, e.g. the Kaggle T4) or float16 (with gradient scaling); the RTX 5070 trains in bfloat16
+seed = 42  # seed of the new class heads and denoising embedding, the shuffling order, and the denoising noise
+
+[queries]
+# Object and denoising queries; all values are the checkpoint defaults
+num_queries = 300  # object queries selected from the encoder output; above the densest frame's 180 objects (01_eda.ipynb section 6)
+num_denoising = 100  # denoising queries built from noised GT boxes during training (https://arxiv.org/abs/2203.01305); 0 disables denoising
+label_noise_ratio = 0.5  # fraction of denoising queries whose class label is replaced by a random class
+box_noise_scale = 1.0  # scale of the random box shift and resize of denoising queries, relative to the box size
+
+[matcher]
+# Hungarian matching cost between predictions and GT boxes; all values are the checkpoint defaults
+class_cost = 2.0  # weight of the focal classification cost
+bbox_cost = 5.0  # weight of the L1 cost on normalized cx, cy, w, h
+giou_cost = 2.0  # weight of the generalized IoU cost
+focal_alpha = 0.25  # alpha of the focal classification cost
+focal_gamma = 2.0  # gamma of the focal classification cost
+
+[loss]
+# Training losses of matched queries; all values are the checkpoint defaults
+vfl_weight = 1.0  # weight of the varifocal classification loss
+bbox_weight = 5.0  # weight of the L1 box loss on normalized cx, cy, w, h
+giou_weight = 2.0  # weight of the generalized IoU box loss
+focal_alpha = 0.75  # alpha of the varifocal loss
+focal_gamma = 2.0  # gamma of the varifocal loss
+auxiliary_loss = true  # also apply the losses to every decoder layer, the encoder proposals, and the denoising queries
+
+[inference]
+score_thresh = 0.001  # minimum sigmoid class score of kept detections (strictly above), in [0, 1]; low so that AP integrates the full precision-recall curve
+detections_per_img = 300  # top-scoring (query, class) pairs kept per frame without NMS, at most num_queries (the query limit) and 500
+warmup_images = 10  # untimed forward passes on the first frame before measuring ms/image
+
+[logging]
+log_interval = 50  # batches between W&B points of the training losses and LR
+sample_frames = 4  # monitoring val frames drawn with GT and predicted boxes to W&B after each epoch, evenly spaced
+sample_score_thresh = 0.3  # minimum score of the predicted boxes drawn on those frames

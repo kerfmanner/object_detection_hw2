@@ -17,6 +17,7 @@ from src.data.dataset import VisDroneDataset
 from src.evaluation.coco_metrics import PREDICTION_COLUMNS, validate_predictions
 from src.inference.frames import predict_frames
 from src.models.registry import build_model
+from src.models.rtdetr import RTDetrDetector
 from src.models.torchvision_labels import (
     shift_detections_from_torchvision,
     shift_targets_to_torchvision,
@@ -31,6 +32,8 @@ from tests.conftest import PROJECT_ROOT
 YOLO_BASELINE = PROJECT_ROOT / "config" / "yolo" / "baseline.toml"
 FASTER_RCNN_BASELINE = PROJECT_ROOT / "config" / "faster_rcnn" / "baseline.toml"
 RETINANET_BASELINE = PROJECT_ROOT / "config" / "retinanet" / "baseline.toml"
+RTDETR_BASELINE = PROJECT_ROOT / "config" / "rtdetr" / "baseline.toml"
+RTDETR_LOSSES = {"loss_vfl", "loss_bbox", "loss_giou"}
 TORCHVISION_BASELINES = [FASTER_RCNN_BASELINE, RETINANET_BASELINE]
 SMOKE_INPUT_SIZE = 320
 YOLO_OPTIMIZER_FIELDS = ("optimizer", "lr", "momentum", "warmup_bias_lr", "close_mosaic")
@@ -179,6 +182,86 @@ def test_torchvision_smoke_run_writes_nothing_and_predicts_valid_submission_rows
     assert model.transform.min_size == (256,) and model.transform.max_size == 448
     assert config["inference"]["warmup_images"] == 1
     assert predictions.columns == list(PREDICTION_COLUMNS) and predictions.height > 0
+    validate_predictions(predictions, images)
+    submission = format_submission(predictions, images)
+    assert submission["image_id"].to_list() == images["image_id"].to_list()
+    assert (submission["PredictionString"] != "").all()
+
+
+@pytest.fixture(scope="module")
+def rtdetr_smoke_model() -> torch.nn.Module:
+    config = load_experiment_config(RTDETR_BASELINE)
+    return build_model(
+        config | {"min_size": SMOKE_OVERRIDES["min_size"], "max_size": SMOKE_OVERRIDES["max_size"]}
+    )
+
+
+def load_two_smoke_train_frames(
+    smoke_annotations: AnnotationTables,
+) -> tuple[list[torch.Tensor], list[dict[str, torch.Tensor]]]:
+    dataset = VisDroneDataset(smoke_annotations, "train", frame_step=1)
+    frames, targets = zip(*(dataset[i] for i in range(2)), strict=True)
+    return [frame.float() / 255 for frame in frames], list(targets)
+
+
+def test_rtdetr_builder_runs_a_forward_and_backward_pass_on_two_frames(
+    rtdetr_smoke_model: torch.nn.Module, smoke_annotations: AnnotationTables
+) -> None:
+    inputs, targets = load_two_smoke_train_frames(smoke_annotations)
+    assert 0 in torch.cat([target["labels"] for target in targets]).tolist()
+    rtdetr_smoke_model.train()
+    rtdetr_smoke_model.zero_grad()
+    losses = rtdetr_smoke_model(inputs, targets)
+    assert set(losses) == RTDETR_LOSSES
+    loss = sum(losses.values(), torch.zeros(()))
+    loss.backward()
+    assert torch.isfinite(loss)
+    gradients = [p.grad for p in rtdetr_smoke_model.parameters() if p.grad is not None]
+    assert gradients and any(g.abs().sum() > 0 for g in gradients)
+    rtdetr_smoke_model.eval()
+    with torch.inference_mode():
+        detections = rtdetr_smoke_model(inputs)
+    assert [len(frame["labels"]) for frame in detections] == [300, 300]
+    labels = torch.cat([frame["labels"] for frame in detections])
+    assert labels.min() >= 0 and labels.max() <= len(CLASS_NAMES) - 1
+
+
+def test_rtdetr_losses_are_finite_under_bfloat16_autocast(
+    rtdetr_smoke_model: torch.nn.Module, smoke_annotations: AnnotationTables
+) -> None:
+    inputs, targets = load_two_smoke_train_frames(smoke_annotations)
+    rtdetr_smoke_model.train()
+    with torch.autocast("cpu", dtype=torch.bfloat16):
+        losses = rtdetr_smoke_model(inputs, targets)
+    assert all(torch.isfinite(value) for value in losses.values())
+
+
+def test_rtdetr_smoke_run_writes_nothing_and_predicts_valid_submission_rows(
+    data_root: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("WANDB_MODE", "disabled")
+    calls = []
+
+    def record_prediction(
+        model: torch.nn.Module, checkpoint_path: Path, images: pl.DataFrame, config: dict
+    ) -> tuple[pl.DataFrame, float]:
+        outputs = predict_frames(model, checkpoint_path, images, config)
+        calls.append({"images": images, "config": config, "outputs": outputs, "model": model})
+        return outputs
+
+    monkeypatch.setattr(src.training.torchvision_loop, "predict_frames", record_prediction)
+    runs_before = list_run_files()
+    assert run_training(RTDETR_BASELINE, data_root, tmp_path / "runs", is_smoke=True) is None
+    assert not (tmp_path / "runs").exists()
+    assert list_run_files() == runs_before
+    assert len(calls) == 1
+    images, config, model = calls[0]["images"], calls[0]["config"], calls[0]["model"]
+    predictions, _ = calls[0]["outputs"]
+    assert images.height == 2 and images["split"].unique().to_list() == ["val"]
+    assert isinstance(model, RTDetrDetector) and (model.min_size, model.max_size) == (256, 448)
+    assert config["inference"]["warmup_images"] == 1
+    assert predictions.columns == list(PREDICTION_COLUMNS) and predictions.height > 0
+    assert predictions.group_by("image_id").len()["len"].max() <= 300
     validate_predictions(predictions, images)
     submission = format_submission(predictions, images)
     assert submission["image_id"].to_list() == images["image_id"].to_list()

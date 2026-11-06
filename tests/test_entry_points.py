@@ -7,18 +7,32 @@ import polars as pl
 import pytest
 import torch
 import wandb
+from torchvision.io import write_jpeg
 
 import src.predict
 import src.train
 from src.data.annotations import BOX_COLUMNS, AnnotationTables
-from src.evaluate import METRICS_FILE, PREDICTIONS_FILE, evaluate_run
+from src.evaluate import (
+    METRICS_FILE,
+    PREDICTIONS_FILE,
+    TRAINING_FIELDS,
+    evaluate_run,
+    format_results_row,
+)
+from src.evaluation.coco_metrics import PREDICTION_COLUMNS
+from src.inference.torchvision_detectors import MODEL_STATE_KEY
 from src.models import registry
-from src.predict import run_prediction
+from src.models.registry import build_model
+from src.predict import TEST_PREDICTIONS_FILE, run_prediction
 from src.submission.validate import validate_submission
 from src.train import run_training
-from src.training.experiment import CONFIG_FILE, format_toml
+from src.training.experiment import CONFIG_FILE, format_toml, load_experiment_config
 from tests.conftest import SYNTHETIC_SPLIT_CLIPS
 from tests.test_experiment import BASELINE_TOML
+from tests.test_smoke import FASTER_RCNN_BASELINE, RETINANET_BASELINE
+
+TRAINING_ONLY_FIELDS_ADDED_WITH_RTDETR = ("amp_dtype", "grad_clip_norm")
+TRAINING_ONLY_ROI_HEADS_FIELDS_ADDED_WITH_GIOU = ("box_loss", "giou_loss_weight")
 
 
 @pytest.fixture
@@ -180,3 +194,50 @@ def test_unknown_split_is_rejected(
     data_root, data_config = prediction_data
     with pytest.raises(ValueError, match="Unknown split 'train'"):
         run_prediction(prediction_run, "train", data_root, data_config)
+
+
+@pytest.mark.parametrize("baseline_path", [FASTER_RCNN_BASELINE, RETINANET_BASELINE])
+def test_runs_resolved_before_training_only_fields_were_added_still_predict_and_evaluate(
+    baseline_path: Path, prediction_data: tuple[Path, Path], tmp_path: Path
+) -> None:
+    baseline = load_experiment_config(baseline_path)
+    experiment = baseline["run"]["experiment"]
+    resolved = baseline | {"min_size": 64, "max_size": 96}
+    legacy = {
+        key: value
+        for key, value in resolved.items()
+        if key not in TRAINING_ONLY_FIELDS_ADDED_WITH_RTDETR
+    }
+    assert set(resolved) - set(legacy) == set(TRAINING_ONLY_FIELDS_ADDED_WITH_RTDETR)
+    if "roi_heads" in baseline:
+        roi_heads: dict = baseline["roi_heads"]
+        legacy["roi_heads"] = {
+            key: value
+            for key, value in roi_heads.items()
+            if key not in TRAINING_ONLY_ROI_HEADS_FIELDS_ADDED_WITH_GIOU
+        }
+        assert set(roi_heads) - set(legacy["roi_heads"]) == set(
+            TRAINING_ONLY_ROI_HEADS_FIELDS_ADDED_WITH_GIOU
+        )
+    run_dir = tmp_path / "runs" / experiment / "20261106-0900"
+    run_dir.mkdir(parents=True)
+    (run_dir / CONFIG_FILE).write_text(format_toml(legacy))
+    model = build_model(legacy)
+    torch.save({MODEL_STATE_KEY: model.state_dict(), "epoch": 1}, run_dir / "best.pt")
+    training = dict.fromkeys(TRAINING_FIELDS, 1)
+    (run_dir / METRICS_FILE).write_text(json.dumps({"training": training}))
+    data_root, data_config = prediction_data
+    for frame in (1, 2):
+        frame_path = data_root / "test" / "images" / "clip_001" / f"{frame:07d}.jpg"
+        frame_path.parent.mkdir(parents=True, exist_ok=True)
+        write_jpeg(torch.full((3, 48, 64), 40 * frame, dtype=torch.uint8), str(frame_path))
+    assert run_prediction(run_dir, "val", data_root, data_config) == run_dir / PREDICTIONS_FILE
+    assert pl.read_parquet(run_dir / PREDICTIONS_FILE).columns == list(PREDICTION_COLUMNS)
+    metrics = evaluate_run(run_dir, data_root, data_config)
+    assert metrics["training"] == training and metrics["evaluation"]["map"] is not None
+    _, row = format_results_row(run_dir, metrics).splitlines()
+    assert row.startswith(experiment)
+    csv_path = run_prediction(run_dir, "test", data_root, data_config)
+    assert csv_path == run_dir / TEST_PREDICTIONS_FILE
+    test_images = pl.read_csv(data_root / "test_images.csv")
+    validate_submission(csv_path, test_images)

@@ -4,6 +4,7 @@ import torch
 
 from src.models.faster_rcnn import build_faster_rcnn
 from src.models.retinanet import build_retinanet
+from src.models.rtdetr import build_rtdetr
 from src.models.yolo import build_yolo
 
 ModelBuilder = Callable[[dict], torch.nn.Module]
@@ -11,6 +12,7 @@ ModelBuilder = Callable[[dict], torch.nn.Module]
 MODEL_BUILDERS: dict[str, ModelBuilder] = {
     "faster_rcnn": build_faster_rcnn,
     "retinanet": build_retinanet,
+    "rtdetr": build_rtdetr,
     "yolo": build_yolo,
 }
 

@@ -12,10 +12,12 @@ num_workers = 4  # DataLoader worker processes decoding frames, integer of at le
 lr = 0.0025  # the torchvision reference RetinaNet LR 0.01 at batch 16 scaled linearly to effective batch 4 (https://github.com/pytorch/vision/tree/main/references/detection, https://arxiv.org/abs/1706.02677); training was stable at this LR in the timing run. SGD learning rate, positive
 momentum = 0.9  # SGD momentum
 weight_decay = 0.0001  # SGD L2 weight decay on all trainable parameters (torchvision reference default)
-schedule = "constant"  # LR schedule: constant, the only supported value
+schedule = "constant"  # LR schedule: constant, or cosine (decay from lr to 0 over all optimizer steps of the run, updated after every step)
 warmup_iters = 0  # LR warmup iterations: 0, the only supported value
+grad_clip_norm = 0.0  # maximum L2 norm of all gradients before an optimizer step; 0 disables clipping
 freeze_batchnorm = true  # BatchNorm layers keep their COCO running statistics (eval mode) and their weights and biases are not trained; false trains them on batches of batch_size frames; the v2 heads use GroupNorm, which this does not affect
 amp = true  # mixed precision training on CUDA: true or false; CPU always trains in float32; inference is float32
+amp_dtype = "float16"  # autocast dtype when amp is true: float16 (with gradient scaling) or bfloat16 (no scaling; float32 on GPUs without native bfloat16)
 seed = 42  # seed of the new classification convolution and the shuffling order
 
 [anchors]

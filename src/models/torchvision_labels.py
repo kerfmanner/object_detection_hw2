@@ -1,6 +1,7 @@
 import torch
 
 TORCHVISION_LABEL_OFFSET = 1
+TORCHVISION_FAMILIES = ("faster_rcnn", "retinanet")
 
 
 def shift_targets_to_torchvision(

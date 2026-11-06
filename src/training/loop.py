@@ -12,6 +12,7 @@ FamilyTrainer = Callable[..., None]
 FAMILY_TRAINERS: dict[str, FamilyTrainer] = {
     "faster_rcnn": train_torchvision_detector,
     "retinanet": train_torchvision_detector,
+    "rtdetr": train_torchvision_detector,
     "yolo": train_yolo,
 }
 

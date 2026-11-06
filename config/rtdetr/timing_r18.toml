@@ -1,0 +1,5 @@
+# Timing run, not a reported experiment: one epoch with the R18vd checkpoint at the suggested batch size to measure epoch time and peak GPU memory, in case R50 fits fewer than about 5 epochs in the budget
+arch = "PekingU/rtdetr_v2_r18vd"
+revision = "5650961749fa93567c0d46fc7f43ea4f9e914107"
+epochs = 1
+batch_size = 4

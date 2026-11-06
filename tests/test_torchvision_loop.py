@@ -1,4 +1,5 @@
 import json
+import math
 from pathlib import Path
 
 import numpy as np
@@ -23,15 +24,18 @@ from src.training.experiment import init_wandb, load_experiment_config
 from src.training.torchvision_loop import (
     BEST_CHECKPOINT,
     LAST_CHECKPOINT,
+    build_lr_scheduler,
     build_optimizer,
     check_training_budget,
     collate_detection_batch,
     freeze_batchnorm,
+    select_autocast_dtype,
     train_one_epoch,
     train_torchvision_detector,
 )
 from tests.conftest import SYNTHETIC_EMPTY_FRAME, SYNTHETIC_SPLIT_CLIPS
-from tests.test_smoke import FASTER_RCNN_BASELINE, RETINANET_BASELINE
+from tests.test_entry_points import TRAINING_ONLY_FIELDS_ADDED_WITH_RTDETR
+from tests.test_smoke import FASTER_RCNN_BASELINE, RETINANET_BASELINE, RTDETR_BASELINE
 
 TINY_INPUT = {"min_size": 64, "max_size": 96}
 FRAME_WIDTH, FRAME_HEIGHT = 64, 48
@@ -50,6 +54,19 @@ TRAINABLE_BATCHNORM = "backbone.body.layer4.0.bn1"
 
 def load_tiny_config(baseline_path: Path) -> dict:
     return load_experiment_config(baseline_path) | TINY_INPUT
+
+
+@pytest.fixture
+def synthetic_data_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    data_config = tmp_path / "data.toml"
+    splits = "\n".join(
+        f"{split} = {json.dumps(clips)}" for split, clips in SYNTHETIC_SPLIT_CLIPS.items()
+    )
+    data_config.write_text(
+        f"[frame_steps]\ntrain_tuning = 1\nval_monitoring = 1\n\n[splits]\n{splits}\n"
+    )
+    monkeypatch.setattr(src.training.torchvision_loop, "DATA_CONFIG_PATH", data_config)
+    monkeypatch.setenv("WANDB_MODE", "disabled")
 
 
 def test_target_labels_are_shifted_up_and_other_keys_dropped() -> None:
@@ -121,9 +138,11 @@ def test_frozen_batchnorm_keeps_running_statistics_and_weights(
     dataset = VisDroneDataset(synthetic_annotations, "train", frame_step=1)
     loader = DataLoader(Subset(dataset, [0, 1]), batch_size=2, collate_fn=collate_detection_batch)
     optimizer = build_optimizer(model, config)
+    scheduler = build_lr_scheduler(optimizer, "constant", warmup_iters=0, total_steps=1)
     scaler = torch.amp.GradScaler("cpu", enabled=False)
     wandb_run = init_wandb(config, WANDB_SETTINGS, run_dir=None)
-    train_one_epoch(model, loader, optimizer, scaler, config, torch.device("cpu"), wandb_run, 0)
+    device = torch.device("cpu")
+    train_one_epoch(model, loader, optimizer, scheduler, scaler, config, device, wandb_run, 0)
     wandb_run.finish()
     after = model.state_dict()
     changed = {key for key in after if not torch.equal(before[key], after[key])}
@@ -202,32 +221,79 @@ def test_full_run_needs_epochs_batch_size_and_lr(baseline_path: Path) -> None:
         check_training_budget(timing | {"train_frames": "val_reporting"})
 
 
-def test_only_a_constant_lr_without_warmup_is_supported() -> None:
+def test_only_constant_and_cosine_schedules_without_warmup_are_supported() -> None:
     config = load_experiment_config(FASTER_RCNN_BASELINE)
     model = torch.nn.Linear(1, 1)
-    optimizer = build_optimizer(model, config | {"lr": 0.01})
-    assert optimizer.param_groups[0]["momentum"] == 0.9
-    for change in ({"schedule": "cosine"}, {"warmup_iters": 100}):
-        with pytest.raises(ValueError, match="Only schedule 'constant'"):
+    for schedule in ("constant", "cosine"):
+        optimizer = build_optimizer(model, config | {"lr": 0.01, "schedule": schedule})
+        assert optimizer.param_groups[0]["momentum"] == 0.9
+    for change in ({"schedule": "step"}, {"warmup_iters": 100}):
+        with pytest.raises(ValueError, match="Only schedules"):
             build_optimizer(model, config | change)
+
+
+def test_cosine_schedule_decays_from_the_lr_to_zero_after_the_last_step() -> None:
+    model = torch.nn.Linear(1, 1)
+    optimizer = torch.optim.SGD(
+        [{"params": [model.weight], "lr": 0.1}, {"params": [model.bias], "lr": 0.01}]
+    )
+    scheduler = build_lr_scheduler(optimizer, "cosine", warmup_iters=0, total_steps=4)
+    rates = []
+    for _ in range(4):
+        rates.append([group["lr"] for group in optimizer.param_groups])
+        optimizer.step()
+        scheduler.step()
+    factors = [(1 + np.cos(np.pi * step / 4)) / 2 for step in range(4)]
+    assert np.allclose(rates, [[0.1 * factor, 0.01 * factor] for factor in factors])
+    assert factors[0] == 1 and np.all(np.diff(factors) < 0)
+    assert [group["lr"] for group in optimizer.param_groups] == pytest.approx([0.0, 0.0])
+
+
+def test_warmup_scales_the_lr_linearly_then_keeps_it_constant() -> None:
+    model = torch.nn.Linear(1, 1)
+    optimizer = torch.optim.SGD(
+        [{"params": [model.weight], "lr": 0.1}, {"params": [model.bias], "lr": 0.01}]
+    )
+    scheduler = build_lr_scheduler(optimizer, "constant", warmup_iters=4, total_steps=6)
+    rates = []
+    for _ in range(6):
+        rates.append([group["lr"] for group in optimizer.param_groups])
+        optimizer.step()
+        scheduler.step()
+    expected = [[0.1 * factor, 0.01 * factor] for factor in (0.25, 0.5, 0.75, 1, 1, 1)]
+    assert np.allclose(rates, expected)
+    constant = torch.optim.SGD(model.parameters(), lr=0.1)
+    no_warmup = build_lr_scheduler(constant, "constant", warmup_iters=0, total_steps=3)
+    for _ in range(3):
+        assert constant.param_groups[0]["lr"] == 0.1
+        constant.step()
+        no_warmup.step()
+
+
+def test_autocast_uses_bfloat16_only_on_gpus_with_native_support(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rtdetr, faster_rcnn = (
+        load_experiment_config(p) for p in (RTDETR_BASELINE, FASTER_RCNN_BASELINE)
+    )
+    cuda, cpu = torch.device("cuda"), torch.device("cpu")
+    monkeypatch.setattr(torch.cuda, "is_bf16_supported", lambda including_emulation: True)
+    assert select_autocast_dtype(rtdetr, cuda) == torch.bfloat16
+    assert select_autocast_dtype(rtdetr, cpu) is None
+    assert select_autocast_dtype(rtdetr | {"amp": False}, cuda) is None
+    monkeypatch.setattr(
+        torch.cuda, "is_bf16_supported", lambda including_emulation: including_emulation
+    )
+    assert select_autocast_dtype(rtdetr, cuda) is None
+    assert select_autocast_dtype(faster_rcnn, cuda) == torch.float16
+    with pytest.raises(ValueError, match="amp_dtype must be one of"):
+        select_autocast_dtype(rtdetr | {"amp_dtype": "float8"}, cuda)
 
 
 @pytest.mark.parametrize("baseline_path", [FASTER_RCNN_BASELINE, RETINANET_BASELINE])
 def test_full_run_writes_checkpoints_and_the_training_section(
-    baseline_path: Path,
-    synthetic_root: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+    baseline_path: Path, synthetic_root: Path, synthetic_data_config: None, tmp_path: Path
 ) -> None:
-    data_config = tmp_path / "data.toml"
-    splits = "\n".join(
-        f"{split} = {json.dumps(clips)}" for split, clips in SYNTHETIC_SPLIT_CLIPS.items()
-    )
-    data_config.write_text(
-        f"[frame_steps]\ntrain_tuning = 1\nval_monitoring = 1\n\n[splits]\n{splits}\n"
-    )
-    monkeypatch.setattr(src.training.torchvision_loop, "DATA_CONFIG_PATH", data_config)
-    monkeypatch.setenv("WANDB_MODE", "disabled")
     tiny_config = load_tiny_config(baseline_path)
     logging_config = tiny_config["logging"] | {"log_interval": 1, "sample_frames": 1}
     budget = {"epochs": 2, "batch_size": 4, "lr": 0.001, "num_workers": 0}
@@ -240,7 +306,7 @@ def test_full_run_writes_checkpoints_and_the_training_section(
     training = json.loads((run_dir / METRICS_FILE).read_text())["training"]
     assert set(TRAINING_FIELDS) <= set(training)
     summary = (training["epochs"], training["frame_step"], training["effective_batch_size"])
-    assert summary == (2, 1, 4)
+    assert summary == (2, 1, 4) and training["precision"] == "float32"
     assert [record["epoch"] for record in training["history"]] == [1, 2]
     val_maps = [record["val/map"] for record in training["history"]]
     assert training["best_epoch"] == int(np.argmax(val_maps)) + 1
@@ -254,3 +320,42 @@ def test_full_run_writes_checkpoints_and_the_training_section(
     for key in (f"{TRAINABLE_BATCHNORM}.running_mean", f"{TRAINABLE_BATCHNORM}.weight"):
         assert torch.equal(last[MODEL_STATE_KEY][key], fresh_state[key])
     fresh.load_state_dict(best[MODEL_STATE_KEY])
+
+
+def test_cosine_run_steps_the_lr_per_optimizer_step_to_zero_at_the_last_epoch(
+    synthetic_root: Path,
+    synthetic_annotations: AnnotationTables,
+    synthetic_data_config: None,
+    tmp_path: Path,
+) -> None:
+    tiny_config = load_tiny_config(FASTER_RCNN_BASELINE)
+    logging_config = tiny_config["logging"] | {"log_interval": 1, "sample_frames": 1}
+    budget = {"epochs": 2, "batch_size": 4, "grad_accum": 2, "lr": 0.001, "num_workers": 0}
+    config = tiny_config | budget | {"schedule": "cosine", "logging": logging_config}
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    wandb_run = init_wandb(config, WANDB_SETTINGS, run_dir=None)
+    train_torchvision_detector(build_model(config), config, synthetic_root, run_dir, wandb_run)
+    wandb_run.finish()
+    history = json.loads((run_dir / METRICS_FILE).read_text())["training"]["history"]
+    batches_per_epoch = math.ceil(len(VisDroneDataset(synthetic_annotations, "train", 1)) / 4)
+    steps_per_epoch = math.ceil(batches_per_epoch / 2)
+    assert (batches_per_epoch, steps_per_epoch) == (3, 2)
+    epoch_end_rates = [record["train/lr"] for record in history]
+    halfway = (1 + np.cos(np.pi * steps_per_epoch / (2 * steps_per_epoch))) / 2
+    assert epoch_end_rates == pytest.approx([0.001 * halfway, 0.0])
+
+
+@pytest.mark.parametrize("field", TRAINING_ONLY_FIELDS_ADDED_WITH_RTDETR)
+def test_training_requires_amp_dtype_and_grad_clip_norm_before_any_checkpoint(
+    field: str, synthetic_root: Path, synthetic_data_config: None, tmp_path: Path
+) -> None:
+    config = load_tiny_config(FASTER_RCNN_BASELINE) | {"epochs": 1, "num_workers": 0}
+    del config[field]
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    wandb_run = init_wandb(config, WANDB_SETTINGS, run_dir=None)
+    with pytest.raises(KeyError, match=field):
+        train_torchvision_detector(build_model(config), config, synthetic_root, run_dir, wandb_run)
+    wandb_run.finish()
+    assert not any(run_dir.iterdir())
