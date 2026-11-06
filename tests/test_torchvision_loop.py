@@ -189,8 +189,11 @@ def test_predictions_are_0_based_top_left_pixel_boxes_with_timing(tmp_path: Path
 
 @pytest.mark.parametrize("baseline_path", [FASTER_RCNN_BASELINE, RETINANET_BASELINE])
 def test_full_run_needs_epochs_batch_size_and_lr(baseline_path: Path) -> None:
+    baseline = load_experiment_config(baseline_path)
+    check_training_budget(baseline)
+    assert (baseline["batch_size"], baseline["grad_accum"]) == (4, 1)
     with pytest.raises(ValueError, match="epochs must be.*batch_size must be.*lr must be positive"):
-        check_training_budget(load_experiment_config(baseline_path))
+        check_training_budget(baseline | {"epochs": 0, "batch_size": 0, "lr": 0.0})
     timing = load_experiment_config(baseline_path.parent / "timing.toml")
     check_training_budget(timing)
     assert (timing["epochs"], timing["batch_size"], timing["grad_accum"]) == (1, 4, 1)

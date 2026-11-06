@@ -5,11 +5,11 @@ trainable_backbone_layers = 3  # trainable ResNet stages counted from the last, 
 train_frames = "train_tuning"  # [frame_steps] key in config/data.toml: train_tuning (step 5) or train_final (step 2)
 min_size = 1024  # shorter frame side after resizing, in px; every frame becomes about 1024 x 1820 px
 max_size = 1824  # upper bound of the longer side after resizing, in px; set explicitly because torchvision's default 1333 would override min_size on 16:9 frames
-epochs = 0  # TODO: set after the timing run to floor(5400 / epoch_seconds), the 1.5 GPU hour baseline budget; epoch_seconds includes monitoring. Training epochs, integer of at least 1
-batch_size = 0  # TODO: set after the timing run; suggested 4 if its gpu_memory_gb stays below about 11, else 2 with grad_accum 2. Frames per forward pass, integer of at least 1
+epochs = 12  # floor(5400 / 446) = floor(12.1), the 1.5 GPU hour baseline budget; 446 s/epoch from the timing run, including monitoring. Training epochs, integer of at least 1
+batch_size = 4  # 9.0 GB peak GPU memory at batch 4 in the timing run, below the 12 GB of the PC. Frames per forward pass, integer of at least 1
 grad_accum = 1  # batches whose gradients are summed per optimizer step, integer of at least 1; effective batch size = batch_size * grad_accum
 num_workers = 4  # DataLoader worker processes decoding frames, integer of at least 0
-lr = 0.0  # TODO: set after the timing run; suggested 0.0025 for effective batch 4, the torchvision reference RetinaNet LR 0.01 at batch 16 scaled linearly (https://github.com/pytorch/vision/tree/main/references/detection, https://arxiv.org/abs/1706.02677). SGD learning rate, positive
+lr = 0.0025  # the torchvision reference RetinaNet LR 0.01 at batch 16 scaled linearly to effective batch 4 (https://github.com/pytorch/vision/tree/main/references/detection, https://arxiv.org/abs/1706.02677); training was stable at this LR in the timing run. SGD learning rate, positive
 momentum = 0.9  # SGD momentum
 weight_decay = 0.0001  # SGD L2 weight decay on all trainable parameters (torchvision reference default)
 schedule = "constant"  # LR schedule: constant, the only supported value
