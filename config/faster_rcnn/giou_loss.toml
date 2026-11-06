@@ -1,0 +1,5 @@
+# Tests the GIoU loss instead of Smooth L1 for the second-stage box regression, with the baseline giou_loss_weight 10, for better localization at the higher IoU thresholds of mAP@[.5:.95]
+epochs = 5  # baseline 10; with a constant LR the LR of every step does not depend on the number of epochs, so these 5 epochs train with the same LR, shuffling order and seed as the baseline's first 5, which contain its best epoch 2; compare with the baseline history up to epoch 5
+
+[roi_heads]
+box_loss = "giou"  # GIoU of the decoded boxes (https://arxiv.org/abs/1902.09630), times giou_loss_weight 10.0 from the baseline (mmdetection's Faster R-CNN GIoU config)

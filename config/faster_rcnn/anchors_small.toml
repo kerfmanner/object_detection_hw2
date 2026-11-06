@@ -1,0 +1,5 @@
+# Tests RPN anchors one octave smaller (16 to 256 px over P2 to P6 instead of 32 to 512) for the small objects, still 3 per location so the COCO RPN head loads
+epochs = 5  # baseline 10; with a constant LR the LR of every step does not depend on the number of epochs, so these 5 epochs train with the same LR, shuffling order and seed as the baseline's first 5, which contain its best epoch 2; compare with the baseline history up to epoch 5
+
+[rpn]
+anchor_sizes = [[16], [32], [64], [128], [256]]  # anchor sizes in px (square root of the area), one list per FPN level P2 to P6; aspect ratios stay the baseline's 0.5, 1, 2

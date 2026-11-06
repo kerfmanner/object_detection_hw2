@@ -1,0 +1,2 @@
+# Tests a cosine LR decay from the baseline LR 0.005 to 0 over the baseline's 10 epochs without warmup, against the decline after the baseline's best epoch 2 at a constant LR
+schedule = "cosine"  # LR factor (1 + cos(pi * step / total steps)) / 2, updated after every optimizer step; total steps cover the baseline's 10 epochs
