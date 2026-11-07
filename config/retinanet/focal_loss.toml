@@ -1,0 +1,5 @@
+# Tests focal loss gamma 1 instead of 2 (alpha stays 0.25): less weight on hard examples, which include unlabelled objects in ignored regions that train as negatives on unmodified frames
+epochs = 5  # baseline 12; with a constant LR the LR of every step does not depend on the number of epochs, so these 5 epochs train with the same LR, shuffling order and seed as the baseline's first 5, which contain its best epoch 4; compare with the baseline history up to epoch 5
+
+[focal_loss]
+gamma = 1.0  # hard (p_t 0.1) to easy (p_t 0.9) weight ratio 9 instead of 81; on COCO gamma 1 with alpha 0.25 lost only 0.3 AP to gamma 2 (33.7 vs 34.0, Table 1b of https://arxiv.org/abs/1708.02002), and alpha 0.25 is the paper's best alpha for both, so only gamma changes

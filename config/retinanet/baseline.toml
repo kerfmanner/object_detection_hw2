@@ -30,6 +30,11 @@ aspect_ratios = [[0.5, 1.0, 2.0], [0.5, 1.0, 2.0], [0.5, 1.0, 2.0], [0.5, 1.0, 2
 fg_iou_thresh = 0.5  # anchors with IoU at least this with a GT box are positives; each GT box also keeps its best anchors (low-quality matches)
 bg_iou_thresh = 0.4  # anchors with IoU below this with every GT box are negatives; anchors in between are ignored
 
+[focal_loss]
+# Classification loss (https://arxiv.org/abs/1708.02002); torchvision's fixed values; set by the training loop, prediction does not read it
+alpha = 0.25  # weight of the positive term, in [0, 1]; negatives get 1 - alpha
+gamma = 2.0  # focusing exponent of the modulating factor (1 - p_t) ** gamma, at least 0; 0 gives alpha-balanced cross entropy
+
 [inference]
 score_thresh = 0.001  # minimum class score of kept candidates, in [0, 1]; low so that AP integrates the full precision-recall curve (torchvision default 0.05)
 nms_thresh = 0.5  # per-class NMS IoU threshold of the final detections, at least 0.5

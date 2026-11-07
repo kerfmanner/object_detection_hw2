@@ -33,6 +33,7 @@ from tests.test_smoke import FASTER_RCNN_BASELINE, RETINANET_BASELINE
 
 TRAINING_ONLY_FIELDS_ADDED_WITH_RTDETR = ("amp_dtype", "grad_clip_norm")
 TRAINING_ONLY_ROI_HEADS_FIELDS_ADDED_WITH_GIOU = ("box_loss", "giou_loss_weight")
+TRAINING_ONLY_TABLES_ADDED_WITH_FOCAL_LOSS = ("focal_loss",)
 
 
 @pytest.fixture
@@ -203,12 +204,10 @@ def test_runs_resolved_before_training_only_fields_were_added_still_predict_and_
     baseline = load_experiment_config(baseline_path)
     experiment = baseline["run"]["experiment"]
     resolved = baseline | {"min_size": 64, "max_size": 96}
-    legacy = {
-        key: value
-        for key, value in resolved.items()
-        if key not in TRAINING_ONLY_FIELDS_ADDED_WITH_RTDETR
-    }
-    assert set(resolved) - set(legacy) == set(TRAINING_ONLY_FIELDS_ADDED_WITH_RTDETR)
+    removed = TRAINING_ONLY_FIELDS_ADDED_WITH_RTDETR + TRAINING_ONLY_TABLES_ADDED_WITH_FOCAL_LOSS
+    legacy = {key: value for key, value in resolved.items() if key not in removed}
+    assert set(TRAINING_ONLY_FIELDS_ADDED_WITH_RTDETR) <= set(resolved) - set(legacy)
+    assert ("focal_loss" in resolved) == (baseline_path == RETINANET_BASELINE)
     if "roi_heads" in baseline:
         roi_heads: dict = baseline["roi_heads"]
         legacy["roi_heads"] = {

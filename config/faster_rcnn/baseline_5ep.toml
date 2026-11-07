@@ -1,0 +1,3 @@
+# Seed repeat of the baseline for 5 epochs (seed 7 instead of 42): its difference from the baseline over epochs 1 to 5 is the seed noise estimate for lr_cosine, anchors_small, and giou_loss
+epochs = 5  # baseline 10; with a constant LR the LR of every step does not depend on the number of epochs, so these 5 epochs match the baseline's first 5 except for the seed; the baseline's best epoch 2 lies within them, so best.pt is selected from the same epochs
+seed = 7  # seed of the new box predictor, the shuffling order, and RPN and RoI sampling; differs from the baseline's 42, so the experiment name gets the -s7 suffix

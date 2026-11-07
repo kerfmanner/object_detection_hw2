@@ -13,6 +13,7 @@ import torch
 import wandb
 from torch.utils.data import DataLoader
 from torchvision.models.detection.faster_rcnn import FasterRCNN
+from torchvision.models.detection.retinanet import RetinaNet
 from tqdm.auto import tqdm
 
 from src.data.annotations import AnnotationTables, load_annotations, load_split_clips
@@ -28,6 +29,7 @@ from src.inference.torchvision_detectors import (
 )
 from src.models.faster_rcnn import set_box_regression_loss
 from src.models.registry import build_model
+from src.models.retinanet import set_focal_loss
 from src.models.torchvision_labels import TORCHVISION_FAMILIES, shift_targets_to_torchvision
 from src.submission.writer import format_submission
 from src.training.experiment import REPO_ROOT, TRAIN_FRAME_STEPS, describe_run
@@ -363,7 +365,8 @@ def fit_torchvision_detector(
     The global RNG and the shuffling generator are seeded with `seed`. With
     `freeze_batchnorm`, BatchNorm parameters are left out of the optimizer and BatchNorm
     layers keep their pretrained running statistics. Faster R-CNN gets the box regression
-    loss of `[roi_heads]` (`set_box_regression_loss`). The family's optimizer gets the LR
+    loss of `[roi_heads]` (`set_box_regression_loss`), RetinaNet the focal loss of
+    `[focal_loss]` (`set_focal_loss`). The family's optimizer gets the LR
     schedule of `build_lr_scheduler` over all optimizer steps of the run (`epochs` times the
     batches per epoch divided by `grad_accum`, rounded up); float16 training scales the
     loss. Each epoch trains
@@ -378,8 +381,8 @@ def fit_torchvision_detector(
         config: Resolved configuration with `run.family`, `epochs`, `batch_size`,
             `num_workers`, `grad_accum`, `amp`, `amp_dtype`, `grad_clip_norm`, `seed`,
             `freeze_batchnorm`, `schedule`, `warmup_iters`, the fields of the family's
-            optimizer builder, the `[roi_heads]` table for Faster R-CNN, and the `[logging]`
-            table.
+            optimizer builder, the `[roi_heads]` table for Faster R-CNN, the `[focal_loss]`
+            table for RetinaNet, and the `[logging]` table.
         train_dataset: Training frames.
         monitor_tables: Annotation tables whose `images` are the monitoring val frames.
         checkpoint_dir: Existing directory for `best.pt` and `last.pt`.
@@ -405,6 +408,8 @@ def fit_torchvision_detector(
     )
     if isinstance(model, FasterRCNN):
         set_box_regression_loss(model, config["roi_heads"])
+    if isinstance(model, RetinaNet):
+        set_focal_loss(model, config["focal_loss"])
     model.to(device)
     if config["freeze_batchnorm"]:
         freeze_batchnorm(model)
