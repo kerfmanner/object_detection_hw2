@@ -1,6 +1,8 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import polars as pl
+import seaborn as sns
+from matplotlib.container import BarContainer
 from matplotlib.figure import Figure
 
 from src.data.classes import CLASS_NAMES
@@ -44,5 +46,65 @@ def plot_class_histograms(
         ax.set_ylabel("Density")
     axes[0, 0].legend(title="Split")
     fig.suptitle(title)
+    fig.tight_layout()
+    return fig
+
+
+def plot_training_history(
+    histories: pl.DataFrame, metrics: dict[str, str], title: str, xlabel: str = "Epoch"
+) -> Figure:
+    """Plot per-epoch metrics of several runs, one panel per metric and one line per run.
+
+    Args:
+        histories: Long table with `experiment`, `epoch`, and one column per metric, e.g.
+            from `load_run_histories`.
+        metrics: Mapping from metric column to its axis label, in panel order.
+        title: Figure title.
+        xlabel: Label of the shared x axis.
+
+    Returns:
+        Figure with one axes per metric in one row.
+    """
+    fig, axes = plt.subplots(1, len(metrics), figsize=(5.2 * len(metrics), 4), squeeze=False)
+    experiments = histories["experiment"].unique(maintain_order=True).to_list()
+    for ax, (column, label) in zip(axes[0], metrics.items(), strict=True):
+        for experiment in experiments:
+            run = histories.filter(pl.col("experiment") == experiment).sort("epoch")
+            ax.plot(run["epoch"], run[column], marker="o", markersize=4, label=experiment)
+        ax.set(xlabel=xlabel, ylabel=label)
+    axes[0, 0].legend(fontsize=8)
+    fig.suptitle(title)
+    fig.tight_layout()
+    return fig
+
+
+def plot_grouped_bars(
+    table: pl.DataFrame,
+    x: str,
+    y: str,
+    hue: str,
+    labels: tuple[str, str, str],
+    value_format: str,
+) -> Figure:
+    """Plot a bar per row of a long table, grouped along x and colored by hue.
+
+    Args:
+        table: Long table with the `x`, `y`, and `hue` columns, in the order to plot.
+        x: Column of the groups on the x axis.
+        y: Column of the bar heights.
+        hue: Column that tells the bars of a group apart.
+        labels: Label of the x axis, label of the y axis with units, and figure title.
+        value_format: Format string of the value printed on each bar, e.g. `{:.3f}`.
+
+    Returns:
+        Figure with one axes.
+    """
+    fig, ax = plt.subplots(figsize=(8, 4))
+    sns.barplot(table.to_dict(as_series=False), x=x, y=y, hue=hue, ax=ax)
+    for container in ax.containers:
+        if isinstance(container, BarContainer):
+            ax.bar_label(container, fmt=value_format, fontsize=7)
+    xlabel, ylabel, title = labels
+    ax.set(xlabel=xlabel, ylabel=ylabel, title=title)
     fig.tight_layout()
     return fig

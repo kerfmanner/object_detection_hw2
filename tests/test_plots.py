@@ -1,8 +1,13 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import polars as pl
+from matplotlib.patches import Rectangle
 
-from src.visualization.plots import plot_class_histograms
+from src.visualization.plots import (
+    plot_class_histograms,
+    plot_grouped_bars,
+    plot_training_history,
+)
 
 
 def test_plot_class_histograms_draws_one_panel_per_class() -> None:
@@ -16,4 +21,34 @@ def test_plot_class_histograms_draws_one_panel_per_class() -> None:
     fig = plot_class_histograms(objects, "size", np.geomspace(1, 100, 10), "Size (px)", "Sizes")
     assert len(fig.axes) == 8
     assert [ax.get_title() for ax in fig.axes][:2] == ["person", "bicycle"]
+    plt.close(fig)
+
+
+def test_training_history_draws_one_line_per_run_and_panel_per_metric() -> None:
+    histories = pl.DataFrame(
+        {
+            "experiment": ["a", "a", "b"],
+            "epoch": [1, 2, 1],
+            "val/map": [0.1, 0.2, 0.15],
+            "train/loss": [1.0, 0.8, 0.9],
+        }
+    )
+    fig = plot_training_history(histories, {"val/map": "mAP", "train/loss": "Loss"}, "History")
+    assert [ax.get_ylabel() for ax in fig.axes] == ["mAP", "Loss"]
+    assert [len(ax.lines) for ax in fig.axes] == [2, 2]
+    assert np.asarray(fig.axes[0].lines[0].get_ydata()).tolist() == [0.1, 0.2]
+    plt.close(fig)
+
+
+def test_grouped_bars_draw_one_bar_per_row() -> None:
+    table = pl.DataFrame(
+        {"size": ["small", "small", "large"], "recall": [0.2, 0.3, 0.9], "model": ["a", "b", "a"]}
+    )
+    fig = plot_grouped_bars(
+        table, "size", "recall", "model", ("Size", "Recall", "Recall"), "{:.2f}"
+    )
+    bars = [patch for patch in fig.axes[0].patches if isinstance(patch, Rectangle)]
+    heights = sorted(bar.get_height() for bar in bars if bar.get_height())
+    assert heights == [0.2, 0.3, 0.9]
+    assert sorted(text.get_text() for text in fig.axes[0].texts) == ["0.20", "0.30", "0.90"]
     plt.close(fig)

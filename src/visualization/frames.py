@@ -10,7 +10,16 @@ from matplotlib.patches import Patch, Rectangle
 
 from src.data.annotations import BOX_COLUMNS
 from src.data.classes import CLASS_NAMES
-from src.visualization.style import CLASS_COLORS, IGNORED_REGION_ALPHA, IGNORED_REGION_COLOR
+from src.visualization.style import (
+    CLASS_COLORS,
+    GT_COLOR,
+    IGNORED_REGION_ALPHA,
+    IGNORED_REGION_COLOR,
+    PREDICTION_COLOR,
+)
+
+EXAMPLE_LINEWIDTH = 2.5
+CONTEXT_LINEWIDTH = 0.9
 
 
 def draw_class_boxes(ax: Axes, objects: pl.DataFrame, linewidth: float) -> None:
@@ -32,6 +41,19 @@ def draw_class_boxes(ax: Axes, objects: pl.DataFrame, linewidth: float) -> None:
                 linewidth=linewidth,
             )
         )
+
+
+def draw_boxes(ax: Axes, boxes: pl.DataFrame, color: str, linewidth: float) -> None:
+    """Draw box outlines in one color.
+
+    Args:
+        ax: Axes showing the frame in pixel coordinates.
+        boxes: Table with pixel box columns.
+        color: Outline color.
+        linewidth: Outline width in points.
+    """
+    for x, y, w, h in boxes.select(BOX_COLUMNS).iter_rows():
+        ax.add_patch(Rectangle((x, y), w, h, fill=False, edgecolor=color, linewidth=linewidth))
 
 
 def shade_ignored_regions(ax: Axes, ignored: pl.DataFrame) -> None:
@@ -209,3 +231,147 @@ def render_figure_as_jpeg(fig: Figure, quality: int) -> bytes:
     fig.savefig(buffer, format="jpeg", pil_kwargs={"quality": quality})
     plt.close(fig)
     return buffer.getvalue()
+
+
+def plot_crop_panels(
+    image_path: Path,
+    ignored: pl.DataFrame,
+    crop_corner: tuple[int, int],
+    crop_size: tuple[int, int],
+    panels: list[tuple[str, pl.DataFrame, str]],
+    title: str,
+) -> Figure:
+    """Plot the same crop of a frame once per box set, side by side.
+
+    Args:
+        image_path: Path of the frame image.
+        ignored: Ignored regions of this frame with pixel box columns, shaded in every panel.
+        crop_corner: Top-left corner (x, y) of the crop in px.
+        crop_size: Crop (width, height) in px.
+        panels: Per panel, its title, a table with pixel box columns, and the box color.
+        title: Figure title.
+
+    Returns:
+        Figure with one axes per panel.
+    """
+    image = plt.imread(image_path)
+    x0, y0 = crop_corner
+    fig, axes = plt.subplots(1, len(panels), figsize=(5.5 * len(panels), 5), squeeze=False)
+    for ax, (panel_title, boxes, color) in zip(axes[0], panels, strict=True):
+        ax.imshow(image)
+        shade_ignored_regions(ax, ignored)
+        draw_boxes(ax, boxes, color, linewidth=CONTEXT_LINEWIDTH)
+        ax.set(
+            xlim=(x0, x0 + crop_size[0]),
+            ylim=(y0 + crop_size[1], y0),
+            xticks=[],
+            yticks=[],
+            title=panel_title,
+        )
+        ax.grid(False)
+    fig.suptitle(title)
+    fig.tight_layout()
+    return fig
+
+
+def compute_context_crop(
+    box: tuple[float, float, float, float],
+    frame_size: tuple[int, int],
+    context_scale: float,
+    min_side: int,
+) -> tuple[int, int, int]:
+    """Compute a square crop centered on a box, shifted inside the frame.
+
+    Args:
+        box: Box `x, y, w, h` in px.
+        frame_size: Frame (width, height) in px.
+        context_scale: Crop side as a multiple of the longer box side.
+        min_side: Smallest crop side in px.
+
+    Returns:
+        Top-left corner x, y and side of the crop in px; the side is at most the shorter
+        frame side.
+    """
+    x, y, w, h = box
+    width, height = frame_size
+    side = int(min(max(context_scale * max(w, h), min_side), width, height))
+    x0 = int(min(max(x + w / 2 - side / 2, 0), width - side))
+    y0 = int(min(max(y + h / 2 - side / 2, 0), height - side))
+    return x0, y0, side
+
+
+def plot_error_examples(
+    examples: pl.DataFrame,
+    images: pl.DataFrame,
+    objects: pl.DataFrame,
+    ignored: pl.DataFrame,
+    detections: pl.DataFrame,
+    context_scale: float,
+    min_side: int,
+) -> Figure:
+    """Plot one zoomed crop per example detection or missed object, one row per category.
+
+    Each crop shows the GT boxes, the kept detections, and the shaded ignored regions of
+    its frame; the example itself is drawn with a thick outline, in the prediction color
+    for detections and in the GT color for missed objects.
+
+    Args:
+        examples: Result of `select_error_examples`.
+        images: Image table with `image_id`, `width`, `height`, and absolute `file_path`.
+        objects: GT objects with `image_id`, `class_id`, and pixel box columns.
+        ignored: Ignored regions with `image_id` and pixel box columns.
+        detections: Kept detections with `image_id` and pixel box columns.
+        context_scale: Crop side as a multiple of the longer side of the example box.
+        min_side: Smallest crop side in px.
+
+    Returns:
+        Figure with one row per category and one column per example of the fullest
+        category; unused axes are hidden.
+    """
+    categories = examples["category"].unique(maintain_order=True).to_list()
+    columns = max(examples.group_by("category").len()["len"].to_list())
+    fig, axes = plt.subplots(
+        len(categories), columns, figsize=(2.6 * columns, 2.9 * len(categories)), squeeze=False
+    )
+    for ax in axes.flat:
+        ax.set_axis_off()
+    frame_rows = {row["image_id"]: row for row in images.iter_rows(named=True)}
+    for row_axes, category in zip(axes, categories, strict=True):
+        rows = examples.filter(pl.col("category") == category).iter_rows(named=True)
+        for ax, example in zip(row_axes, rows):
+            frame = frame_rows[example["image_id"]]
+            box = tuple(example[column] for column in BOX_COLUMNS)
+            x0, y0, side = compute_context_crop(
+                box, (frame["width"], frame["height"]), context_scale, min_side
+            )
+            is_frame = pl.col("image_id") == example["image_id"]
+            ax.set_axis_on()
+            ax.imshow(plt.imread(frame["file_path"]))
+            shade_ignored_regions(ax, ignored.filter(is_frame))
+            draw_boxes(ax, objects.filter(is_frame), GT_COLOR, CONTEXT_LINEWIDTH)
+            draw_boxes(ax, detections.filter(is_frame), PREDICTION_COLOR, CONTEXT_LINEWIDTH)
+            example_color = GT_COLOR if example["score"] is None else PREDICTION_COLOR
+            x, y, w, h = box
+            ax.add_patch(
+                Rectangle(
+                    (x, y), w, h, fill=False, edgecolor=example_color, linewidth=EXAMPLE_LINEWIDTH
+                )
+            )
+            score = "" if example["score"] is None else f" {example['score']:.2f}"
+            ax.set(
+                xlim=(x0, x0 + side),
+                ylim=(y0 + side, y0),
+                xticks=[],
+                yticks=[],
+                title=f"{category}: {CLASS_NAMES[example['class_id']]}{score}",
+            )
+            ax.title.set_fontsize(9)
+            ax.grid(False)
+    handles = [
+        Patch(edgecolor=GT_COLOR, fill=False, label="ground truth"),
+        Patch(edgecolor=PREDICTION_COLOR, fill=False, label="prediction"),
+        Patch(color=IGNORED_REGION_COLOR, alpha=IGNORED_REGION_ALPHA, label="ignored region"),
+    ]
+    fig.legend(handles=handles, ncol=3, loc="lower center", fontsize=9, frameon=False)
+    fig.tight_layout(rect=(0, 0.03, 1, 1))
+    return fig

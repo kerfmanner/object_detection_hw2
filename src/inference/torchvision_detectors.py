@@ -5,8 +5,11 @@ import numpy as np
 import polars as pl
 import torch
 from torchvision.io import ImageReadMode, decode_image
+from torchvision.models.detection.faster_rcnn import FasterRCNN
+from torchvision.models.detection.transform import resize_boxes
 from tqdm.auto import tqdm
 
+from src.data.annotations import BOX_COLUMNS
 from src.inference.detections import build_prediction_table
 from src.models.torchvision_labels import (
     TORCHVISION_FAMILIES,
@@ -149,3 +152,63 @@ def predict_torchvision_frames(
         config["inference"]["warmup_images"],
         config["run"]["family"] in TORCHVISION_FAMILIES,
     )
+
+
+def predict_rpn_proposals(
+    detector: FasterRCNN, frame: torch.Tensor, device: torch.device
+) -> np.ndarray:
+    """Predict the region proposals of one frame with a Faster R-CNN in eval mode.
+
+    The frame goes through the detector's resize transform, backbone, and RPN, the first
+    half of torchvision's `GeneralizedRCNN.forward`, and the proposals are scaled back to the
+    original frame like the final detections:
+    https://github.com/pytorch/vision/blob/main/torchvision/models/detection/generalized_rcnn.py
+
+    Args:
+        detector: Faster R-CNN on `device` in eval mode, so that the RPN keeps its
+            `post_nms_top_n_test` proposals.
+        frame: uint8 tensor of shape (3, height, width).
+        device: Device of the detector.
+
+    Returns:
+        Array of shape (k, 4) with `x, y, w, h` in px of the original frame, in descending
+        objectness order, the order of the RPN's NMS output.
+    """
+    with torch.inference_mode():
+        images, _ = detector.transform(convert_frames_to_inputs([frame], device))
+        features = detector.backbone(images.tensors)
+        [proposals], _ = detector.rpn(images, features)
+        boxes = resize_boxes(proposals, list(images.image_sizes[0]), list(frame.shape[-2:]))
+    xyxy = boxes.double().cpu().numpy()
+    return np.column_stack([xyxy[:, :2], xyxy[:, 2:] - xyxy[:, :2]])
+
+
+def tabulate_rpn_proposals(
+    detector: FasterRCNN, images: pl.DataFrame, device: torch.device
+) -> pl.DataFrame:
+    """Predict the region proposals of every frame of an image table.
+
+    Args:
+        detector: Faster R-CNN on `device` in eval mode.
+        images: Image table with `image_id` and absolute `file_path`.
+        device: Device of the detector.
+
+    Returns:
+        One row per proposal with `image_id`, `rank` (0 for the highest objectness in its
+        frame), and pixel `x`, `y`, `w`, `h` (top-left corner) in the original frame.
+    """
+    frames = []
+    rows = images.select("image_id", "file_path").iter_rows()
+    for image_id, file_path in tqdm(rows, total=images.height, desc="Proposals", unit="frame"):
+        frame = decode_image(file_path, mode=ImageReadMode.RGB)
+        boxes = predict_rpn_proposals(detector, frame, device)
+        frames.append(
+            pl.DataFrame(
+                {
+                    "image_id": pl.Series([image_id] * len(boxes), dtype=images["image_id"].dtype),
+                    "rank": np.arange(len(boxes)),
+                    **{column: boxes[:, i] for i, column in enumerate(BOX_COLUMNS)},
+                }
+            )
+        )
+    return pl.concat(frames)

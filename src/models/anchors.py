@@ -1,3 +1,5 @@
+from collections.abc import Sequence
+
 import numpy as np
 import polars as pl
 import torch
@@ -118,9 +120,34 @@ def load_default_anchors(architecture: str) -> pl.DataFrame:
     with torch.no_grad():
         features = model.backbone(torch.zeros(1, 3, STRIDE_PROBE_SIZE, STRIDE_PROBE_SIZE))
     strides = [STRIDE_PROBE_SIZE // feature.shape[-1] for feature in features.values()]
+    return tabulate_anchors(generator.sizes, generator.aspect_ratios, strides)
+
+
+def tabulate_anchors(
+    sizes: Sequence[Sequence[float]],
+    aspect_ratios: Sequence[Sequence[float]],
+    strides: Sequence[int],
+) -> pl.DataFrame:
+    """List the cell anchors that torchvision's `AnchorGenerator` builds for an anchor setting.
+
+    Args:
+        sizes: Anchor sizes in px (square root of the area), one sequence per FPN level.
+        aspect_ratios: Anchor height / width ratios, one sequence per FPN level.
+        strides: Stride in px of each FPN level.
+
+    Returns:
+        One row per anchor with feature `level`, `stride` in px, corner offsets `x1`, `y1`,
+        `x2`, `y2` from the anchor center in px, and `w`, `h` in px.
+    """
+    generator = AnchorGenerator(
+        tuple(tuple(level_sizes) for level_sizes in sizes),
+        tuple(tuple(level_ratios) for level_ratios in aspect_ratios),
+    )
     rows = [
         (level, stride, *corners)
-        for level, (stride, cell_anchors) in enumerate(zip(strides, generator.cell_anchors))
+        for level, (stride, cell_anchors) in enumerate(
+            zip(strides, generator.cell_anchors, strict=True)
+        )
         for corners in cell_anchors.tolist()
     ]
     return pl.DataFrame(

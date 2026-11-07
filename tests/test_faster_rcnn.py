@@ -1,7 +1,11 @@
 import copy
+from pathlib import Path
 
+import numpy as np
+import polars as pl
 import pytest
 import torch
+from torchvision.io import ImageReadMode, decode_image, write_jpeg
 from torchvision.models.detection import (
     FasterRCNN_ResNet50_FPN_V2_Weights,
     fasterrcnn_resnet50_fpn_v2,
@@ -9,10 +13,16 @@ from torchvision.models.detection import (
 from torchvision.models.detection.faster_rcnn import FasterRCNN
 from torchvision.models.detection.roi_heads import RoIHeads
 from torchvision.models.detection.rpn import RegionProposalNetwork
-from torchvision.ops import generalized_box_iou_loss
+from torchvision.ops import MultiScaleRoIAlign, generalized_box_iou_loss
 
+from src.inference.torchvision_detectors import (
+    convert_frames_to_inputs,
+    predict_rpn_proposals,
+    tabulate_rpn_proposals,
+)
 from src.models.faster_rcnn import (
     GIoURoIHeads,
+    assign_roi_levels,
     build_faster_rcnn,
     compute_giou_box_loss,
     set_box_regression_loss,
@@ -183,3 +193,55 @@ def test_box_loss_must_be_known_and_configured(baseline_config: dict) -> None:
         roi_heads = {k: v for k, v in baseline_config["roi_heads"].items() if k != field}
         with pytest.raises(KeyError, match=field):
             set_box_regression_loss(model, roi_heads)
+
+
+def test_roi_levels_follow_the_fpn_rule_within_p2_to_p5() -> None:
+    sides = np.array([8.0, 111.0, 112.0, 224.0, 448.0, 2000.0])
+    boxes = np.column_stack([np.zeros((len(sides), 2)), sides, sides])
+    assert assign_roi_levels(boxes).tolist() == [2, 2, 3, 4, 5, 5]
+
+
+def test_roi_levels_match_the_box_head_pooler_and_proposals_the_rpn(
+    baseline_config: dict,
+) -> None:
+    detector = build_faster_rcnn(baseline_config | TINY_INPUT).eval()
+    frame = torch.randint(0, 256, (3, 72, 128), dtype=torch.uint8)
+    captured = {}
+    detector.rpn.register_forward_hook(
+        lambda module, inputs, outputs: captured.update(proposals=outputs[0][0])
+    )
+    with torch.inference_mode():
+        detector(convert_frames_to_inputs([frame], torch.device("cpu")))
+    proposals = predict_rpn_proposals(detector, frame, torch.device("cpu"))
+    resized = captured["proposals"].double().numpy()
+    images, _ = detector.transform(convert_frames_to_inputs([frame], torch.device("cpu")))
+    scale = frame.shape[1] / images.image_sizes[0][0]
+    assert len(proposals) == len(resized) > 0
+    assert np.allclose(proposals[:, :2], resized[:, :2] * scale, atol=1e-3)
+    assert np.all(proposals[:, 2:] >= 0)
+    assert np.all(proposals[:, 0] + proposals[:, 2] <= 128 + 1e-3)
+    pooler = detector.roi_heads.box_roi_pool
+    assert isinstance(pooler, MultiScaleRoIAlign) and pooler.map_levels is not None
+    resized_xywh = np.column_stack([resized[:, :2], resized[:, 2:] - resized[:, :2]])
+    is_valid = (resized_xywh[:, 2] > 0) & (resized_xywh[:, 3] > 0)
+    levels = pooler.map_levels([captured["proposals"][torch.from_numpy(is_valid)]]).numpy()
+    assert np.array_equal(assign_roi_levels(resized_xywh[is_valid]), levels + 2)
+
+
+def test_proposal_table_ranks_the_proposals_of_every_frame(
+    baseline_config: dict, tmp_path: Path
+) -> None:
+    detector = build_faster_rcnn(baseline_config | TINY_INPUT).eval()
+    paths = []
+    for i in range(2):
+        paths.append(tmp_path / f"{i}.jpg")
+        write_jpeg(torch.randint(0, 256, (3, 48, 64), dtype=torch.uint8), str(paths[-1]))
+    images = pl.DataFrame({"image_id": [5, 9], "file_path": [str(path) for path in paths]})
+    proposals = tabulate_rpn_proposals(detector, images, torch.device("cpu"))
+    assert proposals.columns == ["image_id", "rank", "x", "y", "w", "h"]
+    for image_id, path in zip((5, 9), paths, strict=True):
+        frame = decode_image(str(path), mode=ImageReadMode.RGB)
+        expected = predict_rpn_proposals(detector, frame, torch.device("cpu"))
+        rows = proposals.filter(pl.col("image_id") == image_id)
+        assert rows["rank"].to_list() == list(range(len(expected)))
+        assert np.allclose(rows.select("x", "y", "w", "h").to_numpy(), expected)

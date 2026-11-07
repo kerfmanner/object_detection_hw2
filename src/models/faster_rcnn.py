@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 import torch.nn.functional as F
 from torchvision.models.detection import (
@@ -8,7 +9,9 @@ from torchvision.models.detection._utils import BoxCoder
 from torchvision.models.detection.faster_rcnn import FasterRCNN, FastRCNNPredictor
 from torchvision.models.detection.roi_heads import RoIHeads
 from torchvision.ops import generalized_box_iou_loss
+from torchvision.ops.poolers import LevelMapper
 
+from src.data.boxes import convert_xywh_to_xyxy
 from src.data.classes import CLASS_NAMES
 from src.models.anchors import build_anchor_generator
 
@@ -16,6 +19,8 @@ SUPPORTED_ARCH = "fasterrcnn_resnet50_fpn_v2"
 SUPPORTED_INIT = "coco"
 BOX_LOSSES = ("smooth_l1", "giou")
 UNIT_BOX = (0.0, 0.0, 1.0, 1.0)
+ROI_MIN_LEVEL = 2
+ROI_MAX_LEVEL = 5
 
 
 def build_faster_rcnn(config: dict) -> FasterRCNN:
@@ -185,3 +190,22 @@ def set_box_regression_loss(detector: FasterRCNN, roi_heads_config: dict) -> Non
     if not isinstance(roi_heads, RoIHeads):
         raise TypeError(f"Expected torchvision RoIHeads, got {type(roi_heads).__name__}")
     detector.roi_heads = GIoURoIHeads(roi_heads, giou_loss_weight)
+
+
+def assign_roi_levels(boxes: np.ndarray) -> np.ndarray:
+    """Assign boxes to the FPN level from which the box head pools their RoI features.
+
+    torchvision's `MultiScaleRoIAlign` of Faster R-CNN ResNet50-FPN pools from P2 to P5
+    (strides 4 to 32) with `LevelMapper`, level floor(4 + log2(sqrt(area) / 224)) clamped to
+    that range: equation 1 of FPN (https://arxiv.org/abs/1612.03144) and
+    https://github.com/pytorch/vision/blob/main/torchvision/ops/poolers.py
+
+    Args:
+        boxes: Array of shape (n, 4) with `x, y, w, h` in px of the resized frame.
+
+    Returns:
+        Array of shape (n,) with the FPN level, 2 to 5.
+    """
+    mapper = LevelMapper(k_min=ROI_MIN_LEVEL, k_max=ROI_MAX_LEVEL)
+    levels = mapper([torch.from_numpy(convert_xywh_to_xyxy(boxes)).double()])
+    return levels.numpy() + ROI_MIN_LEVEL

@@ -7,6 +7,7 @@ from src.models.anchors import (
     compute_best_anchor_iou,
     compute_shape_iou,
     load_default_anchors,
+    tabulate_anchors,
 )
 
 
@@ -54,3 +55,20 @@ def test_best_anchor_iou_is_one_on_the_grid_and_bounded_by_shape_iou() -> None:
     assert grid[1] == pytest.approx((12 * 12) / (2 * 256 - 144))
     assert np.all(grid <= shape + 1e-12)
     assert shape[2] == pytest.approx(16 / 256)
+
+
+def test_tabulated_default_setting_equals_the_default_anchors() -> None:
+    default = load_default_anchors("fasterrcnn_resnet50_fpn_v2")
+    sizes = [[32], [64], [128], [256], [512]]
+    tabulated = tabulate_anchors(sizes, [[0.5, 1.0, 2.0]] * 5, [4, 8, 16, 32, 64])
+    assert tabulated.equals(default)
+
+
+def test_tabulated_anchors_follow_sizes_and_ratios_per_level() -> None:
+    anchors = tabulate_anchors([[16, 24], [32, 48]], [[0.5, 1.0, 2.0]] * 2, [4, 8])
+    assert anchors.group_by("level").len().sort("level")["len"].to_list() == [6, 6]
+    areas = (anchors["w"] * anchors["h"]).to_numpy()
+    expected = np.repeat([16, 24, 32, 48], 3).astype(float) ** 2
+    assert np.allclose(np.sort(areas), np.sort(expected), rtol=0.1)
+    with pytest.raises(ValueError):
+        tabulate_anchors([[16], [32]], [[1.0]] * 2, [4])
