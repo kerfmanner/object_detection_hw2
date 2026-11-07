@@ -10,12 +10,14 @@ import torch
 import wandb
 from ultralytics import YOLO, settings
 from ultralytics.engine.trainer import BaseTrainer
+from ultralytics.utils.torch_utils import unwrap_model
 
 from src.data.annotations import load_annotations, load_split_clips
 from src.data.dataset import load_frame_steps, select_smoke_frames
 from src.data.yolo_export import write_yolo_dataset
 from src.evaluate import DATA_CONFIG_PATH, METRICS_FILE
 from src.inference.frames import predict_frames
+from src.models.yolo import set_assigner_topk
 from src.submission.writer import format_submission
 from src.training.experiment import REPO_ROOT, TRAIN_FRAME_STEPS, describe_run
 
@@ -75,19 +77,20 @@ def fit_yolo(
 ) -> tuple[BaseTrainer, int]:
     """Train a YOLO model with Ultralytics, writing all its outputs into `save_dir`.
 
-    Training hyperparameters not set here are Ultralytics defaults. Per-epoch validation on
-    the `val` list of `data_yaml` selects `best.pt` by mAP@[.5:.95] and uses the NMS options
-    of `[inference]`. Each epoch's losses, metrics, and learning rates go to W&B through
-    our Ultralytics callbacks (https://docs.ultralytics.com/usage/callbacks/); the built-in
-    Ultralytics W&B integration is switched off in the Ultralytics settings
+    Training hyperparameters not set here are Ultralytics defaults; the TAL topk of
+    `[assigner]` is set on the training and EMA models when training starts. Per-epoch
+    validation on the `val` list of `data_yaml` selects `best.pt` by mAP@[.5:.95] and uses
+    the NMS options of `[inference]`. Each epoch's losses, metrics, and learning rates go to
+    W&B through our Ultralytics callbacks (https://docs.ultralytics.com/usage/callbacks/);
+    the built-in Ultralytics W&B integration is switched off in the Ultralytics settings
     (https://docs.ultralytics.com/quickstart/#modifying-ultralytics-settings), so each run
     is logged once.
 
     Args:
         model: YOLO model from `build_model`.
         config: Resolved configuration with `imgsz`, `epochs`, `batch_size`, `optimizer`, `lr`,
-            `momentum`, `warmup_bias_lr`, `close_mosaic`, `amp`, `seed`, and `[inference]`
-            `iou`, `max_det`, and `agnostic_nms`.
+            `momentum`, `warmup_bias_lr`, `close_mosaic`, `scale`, `amp`, `seed`, `[assigner]`
+            `topk`, and `[inference]` `iou`, `max_det`, and `agnostic_nms`.
         data_yaml: Path of the `data.yaml` from `write_yolo_dataset`.
         save_dir: New directory for the Ultralytics outputs.
         wandb_run: W&B run for the per-epoch curves.
@@ -103,6 +106,12 @@ def fit_yolo(
         if trainer.best_fitness == trainer.fitness:
             best_epochs.append(trainer.epoch + 1)
 
+    def set_trainer_topk(trainer: BaseTrainer) -> None:
+        if not isinstance(trainer.model, torch.nn.Module) or trainer.ema is None:
+            raise RuntimeError("Ultralytics started training without a model and its EMA")
+        for detector in (unwrap_model(trainer.model), trainer.ema.ema):
+            set_assigner_topk(detector, config["assigner"]["topk"])
+
     def log_epoch(trainer: BaseTrainer) -> None:
         wandb_run.log(
             {
@@ -117,6 +126,7 @@ def fit_yolo(
     model.add_callback("on_model_save", record_best_epoch)
     model.add_callback("on_fit_epoch_end", log_epoch)
     model.add_callback("on_train_end", finished_trainers.append)
+    model.add_callback("on_train_start", set_trainer_topk)
     inference = config["inference"]
     options = {
         "data": str(data_yaml),
@@ -128,6 +138,7 @@ def fit_yolo(
         "momentum": config["momentum"],
         "warmup_bias_lr": config["warmup_bias_lr"],
         "close_mosaic": config["close_mosaic"],
+        "scale": config["scale"],
         "amp": config["amp"],
         "seed": config["seed"],
         "iou": inference["iou"],

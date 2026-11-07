@@ -1,0 +1,2 @@
+# Tests scale augmentation gain 0.25 instead of 0.5: random resize factors in [0.75, 1.25] instead of [0.5, 1.5], so that small objects are not shrunk below what stride 8 resolves
+scale = 0.25  # at gain 0.5 a 5th percentile object (19.8 px) can shrink to 10 px, below the 16 px floor at which the Ultralytics assigner enlarges boxes to pick candidate points

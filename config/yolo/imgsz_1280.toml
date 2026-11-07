@@ -1,0 +1,2 @@
+# Tests input size 1280 instead of 1824 for training and inference: the speed versus accuracy point, with train objects (step 5) at a median sqrt(area) of 30 px instead of 43 px in the network input, 55% instead of 28% below 32 px and 10% instead of 2% below 16 px
+imgsz = 1280  # longer frame side in px, multiple of 32; about 2 times fewer input pixels than 1824

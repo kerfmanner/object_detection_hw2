@@ -22,7 +22,7 @@ from src.models.torchvision_labels import (
     shift_detections_from_torchvision,
     shift_targets_to_torchvision,
 )
-from src.models.yolo import build_yolo
+from src.models.yolo import build_yolo, set_assigner_topk
 from src.submission.writer import format_submission
 from src.train import RUNS_ROOT, run_training
 from src.training.experiment import load_experiment_config
@@ -36,7 +36,7 @@ RTDETR_BASELINE = PROJECT_ROOT / "config" / "rtdetr" / "baseline.toml"
 RTDETR_LOSSES = {"loss_vfl", "loss_bbox", "loss_giou"}
 TORCHVISION_BASELINES = [FASTER_RCNN_BASELINE, RETINANET_BASELINE]
 SMOKE_INPUT_SIZE = 320
-YOLO_OPTIMIZER_FIELDS = ("optimizer", "lr", "momentum", "warmup_bias_lr", "close_mosaic")
+YOLO_TRAIN_FIELDS = ("optimizer", "lr", "momentum", "warmup_bias_lr", "close_mosaic", "scale")
 
 
 def build_yolo_batch(frames: AnnotationTables) -> dict[str, torch.Tensor]:
@@ -104,6 +104,13 @@ def test_yolo_smoke_run_writes_nothing_and_predicts_valid_submission_rows(
         return outputs
 
     monkeypatch.setattr(src.training.yolo, "predict_frames", record_prediction)
+    topk_calls = []
+
+    def record_topk(detector: DetectionModel, topk: int) -> None:
+        set_assigner_topk(detector, topk)
+        topk_calls.append((detector, detector.criterion.assigner.topk))
+
+    monkeypatch.setattr(src.training.yolo, "set_assigner_topk", record_topk)
     runs_before = list_run_files()
     assert run_training(YOLO_BASELINE, data_root, tmp_path / "runs", is_smoke=True) is None
     assert not (tmp_path / "runs").exists()
@@ -120,12 +127,16 @@ def test_yolo_smoke_run_writes_nothing_and_predicts_valid_submission_rows(
         "momentum": train_args["momentum"],
         "warmup_bias_lr": train_args["warmup_bias_lr"],
         "close_mosaic": train_args["close_mosaic"],
-    } == {key: config[key] for key in YOLO_OPTIMIZER_FIELDS}
+        "scale": train_args["scale"],
+    } == {key: config[key] for key in YOLO_TRAIN_FIELDS}
     assert predictions.columns == list(PREDICTION_COLUMNS) and predictions.height > 0
     validate_predictions(predictions, images)
     submission = format_submission(predictions, images)
     assert submission["image_id"].to_list() == images["image_id"].to_list()
     assert (submission["PredictionString"] != "").all()
+    topk = load_experiment_config(YOLO_BASELINE)["assigner"]["topk"]
+    assert [assigned for _, assigned in topk_calls] == [topk, topk]
+    assert topk_calls[0][0] is not topk_calls[1][0]
 
 
 @pytest.mark.parametrize("baseline_path", TORCHVISION_BASELINES)

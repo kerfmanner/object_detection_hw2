@@ -10,8 +10,13 @@ lr = 0.000833  # initial learning rate (Ultralytics lr0); the value "auto" picks
 momentum = 0.9  # AdamW beta1 (SGD momentum for SGD); the value "auto" picks
 warmup_bias_lr = 0.0  # bias learning rate at the start of warmup; "auto" sets 0.0 (Ultralytics default otherwise 0.1)
 close_mosaic = 10  # turn mosaic augmentation off for the last N epochs; 0 keeps it on (Ultralytics default 10)
+scale = 0.5  # scale augmentation gain in [0, 1): train frames are resized by a random factor in [1 - scale, 1 + scale] (Ultralytics default 0.5)
 amp = true  # mixed precision training: true or false (Ultralytics default true)
 seed = 42  # Ultralytics training seed (data order, augmentation, new head weights)
+
+[assigner]
+# Task-aligned label assignment (TOOD, https://arxiv.org/abs/2108.07755); set by the training loop, prediction does not read it
+topk = 10  # positive grid points per GT box among those inside it, integer of at least 1 (Ultralytics v8DetectionLoss default 10)
 
 [inference]
 conf = 0.001  # minimum score of kept detections, in [0, 1]; low so that AP integrates the full precision-recall curve

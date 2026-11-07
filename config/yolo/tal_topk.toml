@@ -1,0 +1,3 @@
+# Tests TAL topk 20 instead of 10: more positive grid points for medium and large objects, where the baseline trails Faster R-CNN (AP_medium 0.248 vs 0.274, AP_large 0.396 vs 0.464), while most small objects already use all of their candidates
+[assigner]
+topk = 20  # at imgsz 1824 train objects (step 5) have a median of 38 candidate points inside the box over strides 8, 16, 32: medium 45 (99% above 10, 89% above 20), large 252, small 13 (32% at most 10, 80% at most 20); TOOD found COCO AP insensitive to topk in 5 to 21 (42.0 to 42.5 AP, https://arxiv.org/abs/2108.07755 section 4.1)
