@@ -1,0 +1,3 @@
+# Tests both AdamW learning rates scaled by the effective batch size (4 instead of the recipe's 16), against the baseline's decline after its best epoch 2: monitoring mAP fell from 0.323 to 0.296 over epochs 3 to 7 at the constant LR 1e-4 while the training loss kept falling
+lr = 0.000025  # baseline 1e-4 (recipe value at batch 16) times 4 / 16, the linear scaling rule (https://arxiv.org/abs/1706.02677); close to the baseline's mean warmup LR in epoch 1 (about 3e-5), which already reached monitoring mAP 0.320
+backbone_lr = 0.0000025  # baseline 1e-5 times 4 / 16, so the backbone LR stays 0.1 times the encoder and decoder LR and only the overall LR scale changes

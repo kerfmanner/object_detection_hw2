@@ -295,6 +295,48 @@ def test_baseline_and_timing_configs_are_valid_full_runs(baseline_config: dict) 
     assert list(r18.detector.config.encoder_in_channels) == [128, 256, 512]
 
 
+@pytest.mark.parametrize(
+    ("name", "changed"),
+    [
+        ("lr_scaled", {"lr": 2.5e-5, "backbone_lr": 2.5e-6}),
+        ("denoising_groups", {"queries": {"num_denoising": 200}}),
+    ],
+)
+def test_experiment_configs_change_one_factor_of_the_baseline(
+    baseline_config: dict, name: str, changed: dict
+) -> None:
+    config = load_experiment_config(RTDETR_DIR / f"{name}.toml")
+    assert config["run"]["experiment"] == f"rtdetr-{name}"
+    assert set(config) == set(baseline_config)
+    different = {key for key in config if key != "run" and config[key] != baseline_config[key]}
+    changed_values = {
+        key: (
+            {k: v for k, v in config[key].items() if v != baseline_config[key][k]}
+            if isinstance(config[key], dict)
+            else config[key]
+        )
+        for key in different
+    }
+    assert changed_values == changed
+    check_training_budget(config)
+
+
+def test_scaled_learning_rates_keep_the_backbone_ratio(
+    baseline_config: dict, baseline_model: RTDetrDetector
+) -> None:
+    config = load_experiment_config(RTDETR_DIR / "lr_scaled.toml")
+    main, norm, backbone = build_rtdetr_optimizer(baseline_model, config).param_groups
+    assert (main["lr"], norm["lr"], backbone["lr"]) == (2.5e-5, 2.5e-5, 2.5e-6)
+    assert backbone["lr"] / main["lr"] == pytest.approx(
+        baseline_config["backbone_lr"] / baseline_config["lr"]
+    )
+
+
+def test_denoising_groups_config_builds_a_model_with_200_denoising_queries() -> None:
+    config = load_experiment_config(RTDETR_DIR / "denoising_groups.toml")
+    assert build_rtdetr(config | TINY_INPUT).detector.config.num_denoising == 200
+
+
 def test_frames_without_boxes_train_in_a_batch(tiny_model: RTDetrDetector) -> None:
     frames = [torch.rand(3, 48, 64), torch.rand(3, 40, 80)]
     box_targets = {"boxes": torch.tensor([[2.0, 3.0, 12.0, 9.0]]), "labels": torch.tensor([4])}

@@ -1,0 +1,3 @@
+# Tests 200 denoising queries instead of 100, so that dense frames train with several denoising groups: the number of groups is num_denoising // (most GT boxes of a frame in the batch), and at 100 59% of training batches (step 5, batch 2) have a single group
+[queries]
+num_denoising = 200  # train frames (step 5) have a median of 43 and at most 161 objects; groups per batch at 100: median 1, 59% single group, at most 322 denoising queries; at 200: median 3, 15% single group, at most 400 denoising queries (group rule in get_contrastive_denoising_training_group, https://github.com/huggingface/transformers/blob/main/src/transformers/models/rt_detr_v2/modeling_rt_detr_v2.py; denoising task: https://arxiv.org/abs/2203.01305)
