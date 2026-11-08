@@ -14,9 +14,11 @@ import wandb
 from torch.utils.data import DataLoader
 from torchvision.models.detection.faster_rcnn import FasterRCNN
 from torchvision.models.detection.retinanet import RetinaNet
+from torchvision.models.detection.transform import GeneralizedRCNNTransform
 from tqdm.auto import tqdm
 
 from src.data.annotations import AnnotationTables, load_annotations, load_split_clips
+from src.data.augment import build_train_transform, draw_input_sizes
 from src.data.dataset import VisDroneDataset, load_frame_steps, select_frames, select_smoke_frames
 from src.evaluate import DATA_CONFIG_PATH, METRICS_FILE
 from src.evaluation.coco_metrics import evaluate_detections
@@ -30,6 +32,7 @@ from src.inference.torchvision_detectors import (
 from src.models.faster_rcnn import set_box_regression_loss
 from src.models.registry import build_model
 from src.models.retinanet import set_focal_loss
+from src.models.rtdetr import RTDetrDetector
 from src.models.torchvision_labels import TORCHVISION_FAMILIES, shift_targets_to_torchvision
 from src.submission.writer import format_submission
 from src.training.experiment import REPO_ROOT, TRAIN_FRAME_STEPS, describe_run
@@ -56,14 +59,16 @@ SMOKE_WARMUP_IMAGES = 1
 SMOKE_LOGGING = {"log_interval": 1, "sample_frames": 1}
 AUTOCAST_DTYPES = {"float16": torch.float16, "bfloat16": torch.bfloat16}
 Batch = tuple[list[torch.Tensor], list[dict[str, torch.Tensor]]]
+InputSize = tuple[int, int]
 
 
 def check_training_budget(config: dict) -> None:
-    """Check the training frames, epochs, batch size, accumulation, and LR of a full run.
+    """Check the training frames, epochs, batch size, accumulation, LR, and augmentation
+    schedule of a full run.
 
     Args:
         config: Resolved configuration with `train_frames`, `epochs`, `batch_size`,
-            `grad_accum`, and `lr`.
+            `grad_accum`, `lr`, and the `[augment]` table.
     """
     problems = []
     if config["train_frames"] not in TRAIN_FRAME_STEPS:
@@ -73,6 +78,9 @@ def check_training_budget(config: dict) -> None:
             problems.append(f"{key} must be an integer of at least 1")
     if not config["lr"] > 0:
         problems.append("lr must be positive")
+    clean_epochs = config["augment"]["clean_epochs"]
+    if type(clean_epochs) is not int or not 0 <= clean_epochs < config["epochs"]:
+        problems.append("augment.clean_epochs must be an integer from 0 to epochs - 1")
     if problems:
         raise ValueError(f"Invalid config {config['run']['config']}: {'; '.join(problems)}")
 
@@ -115,6 +123,33 @@ def set_train_mode(model: torch.nn.Module, is_batchnorm_frozen: bool) -> None:
         for module in model.modules():
             if isinstance(module, torch.nn.BatchNorm2d):
                 module.eval()
+
+
+def set_input_size(model: torch.nn.Module, min_size: int, max_size: int) -> None:
+    """Set the shorter-side size and the longer-side bound to which a detector resizes frames.
+
+    A torchvision detector gets a new `GeneralizedRCNNTransform` with the same normalization
+    and padding; the transform has no parameters, so training is unaffected otherwise.
+
+    Args:
+        model: Wrapped RT-DETR, or a torchvision detector with a `GeneralizedRCNNTransform`.
+        min_size: Shorter frame side in px.
+        max_size: Upper bound of the longer frame side in px.
+    """
+    if isinstance(model, RTDetrDetector):
+        model.min_size, model.max_size = min_size, max_size
+        return
+    transform = model.transform if isinstance(model, (FasterRCNN, RetinaNet)) else None
+    if not isinstance(transform, GeneralizedRCNNTransform):
+        raise TypeError(f"Cannot set the input size of {type(model).__name__}")
+    model.transform = GeneralizedRCNNTransform(
+        min_size,
+        max_size,
+        transform.image_mean,
+        transform.image_std,
+        size_divisible=transform.size_divisible,
+        fixed_size=transform.fixed_size,
+    )
 
 
 def build_optimizer(model: torch.nn.Module, config: dict) -> torch.optim.SGD:
@@ -228,6 +263,7 @@ def train_one_epoch(
     device: torch.device,
     wandb_run: wandb.Run,
     iteration: int,
+    input_sizes: list[InputSize] | None = None,
 ) -> tuple[dict[str, float], int]:
     """Train one epoch with optional mixed precision and gradient accumulation.
 
@@ -237,7 +273,9 @@ def train_one_epoch(
     after it, the scheduler steps. Target labels are shifted for torchvision families only.
     Every `log_interval` batches the mean losses and the LR of the first parameter group go
     to W&B under `iter/`, against the `iteration` (batch) counter. With `freeze_batchnorm`,
-    BatchNorm layers stay in eval mode, so their running statistics do not change.
+    BatchNorm layers stay in eval mode, so their running statistics do not change. With
+    `input_sizes`, each batch is resized to its own size (multi-scale training) and the
+    configured `min_size` and `max_size` are restored after the epoch.
 
     Args:
         model: Detector of the shared loop (torchvision or wrapped RT-DETR) on `device`.
@@ -250,6 +288,8 @@ def train_one_epoch(
         device: Device of the model.
         wandb_run: W&B run for the loss curves.
         iteration: Number of batches trained before this epoch.
+        input_sizes: One (min_size, max_size) pair in px per batch from `draw_input_sizes`,
+            or None to train at the model's input size.
 
     Returns:
         Mean of each loss over the epoch's batches, with their sum under `loss`, and the
@@ -265,6 +305,8 @@ def train_one_epoch(
     interval_sums: dict[str, float] = {}
     optimizer.zero_grad(set_to_none=True)
     for batch_index, (frames, targets) in enumerate(tqdm(loader, desc="Training", unit="batch")):
+        if input_sizes is not None:
+            set_input_size(model, *input_sizes[batch_index])
         inputs = convert_frames_to_inputs(frames, device)
         model_targets = shift_targets_to_torchvision(targets) if has_background_label else targets
         device_targets = [
@@ -299,6 +341,8 @@ def train_one_epoch(
                 | {"iter/lr": optimizer.param_groups[0]["lr"], "iteration": iteration}
             )
             interval_sums = {}
+    if input_sizes is not None:
+        set_input_size(model, config["min_size"], config["max_size"])
     return {name: total / len(loader) for name, total in epoch_sums.items()}, iteration
 
 
@@ -351,6 +395,33 @@ def draw_sample_frames(
     return samples
 
 
+def build_train_loader(
+    dataset: VisDroneDataset, config: dict, device: torch.device, generator: torch.Generator
+) -> DataLoader:
+    """Build the shuffling DataLoader of the training frames.
+
+    Args:
+        dataset: Training frames.
+        config: Resolved configuration with `batch_size` and `num_workers`.
+        device: Device to train on; CUDA pins host memory.
+        generator: Seeded generator of the shuffling order.
+
+    Returns:
+        The DataLoader with `collate_detection_batch` and persistent workers.
+    """
+    num_workers = config["num_workers"]
+    return DataLoader(
+        dataset,
+        batch_size=config["batch_size"],
+        shuffle=True,
+        num_workers=num_workers,
+        collate_fn=collate_detection_batch,
+        pin_memory=device.type == "cuda",
+        persistent_workers=num_workers > 0,
+        generator=generator,
+    )
+
+
 def fit_torchvision_detector(
     model: torch.nn.Module,
     config: dict,
@@ -359,6 +430,7 @@ def fit_torchvision_detector(
     checkpoint_dir: Path,
     device: torch.device,
     wandb_run: wandb.Run,
+    clean_dataset: VisDroneDataset | None = None,
 ) -> tuple[list[dict], int]:
     """Train a detector of the shared loop, monitor it after every epoch, and save checkpoints.
 
@@ -375,6 +447,10 @@ def fit_torchvision_detector(
     `last.pt` is written after every epoch and `best.pt` whenever the monitoring mAP beats
     all earlier epochs (ties keep the earlier epoch); both hold `model` (the state dict) and
     `epoch`. The epoch record and a few frames with GT and predicted boxes go to W&B.
+    With `[augment]` `train_scales`, every batch of an epoch gets an input size from
+    `draw_input_sizes`, seeded with `seed` and the epoch. The last `clean_epochs` epochs
+    train at the configured input size and on `clean_dataset` when given, the official
+    RT-DETRv2 recipe's switch-off of augmentation before the end of training.
 
     Args:
         model: torchvision detector with background label 0, or wrapped RT-DETR.
@@ -382,12 +458,14 @@ def fit_torchvision_detector(
             `num_workers`, `grad_accum`, `amp`, `amp_dtype`, `grad_clip_norm`, `seed`,
             `freeze_batchnorm`, `schedule`, `warmup_iters`, the fields of the family's
             optimizer builder, the `[roi_heads]` table for Faster R-CNN, the `[focal_loss]`
-            table for RetinaNet, and the `[logging]` table.
+            table for RetinaNet, and the `[augment]` and `[logging]` tables.
         train_dataset: Training frames.
         monitor_tables: Annotation tables whose `images` are the monitoring val frames.
         checkpoint_dir: Existing directory for `best.pt` and `last.pt`.
         device: Device to train on.
         wandb_run: W&B run for curves and sample frames.
+        clean_dataset: Training frames without the scheduled augmentation, for the clean
+            epochs, or None to train every epoch on `train_dataset`.
 
     Returns:
         One record per epoch (`epoch`, mean `train/` losses, `train/lr`, `val/` monitoring
@@ -395,17 +473,15 @@ def fit_torchvision_detector(
         training or None on CPU) and the 1-based epoch saved as `best.pt`.
     """
     torch.manual_seed(config["seed"])
-    num_workers = config["num_workers"]
-    loader = DataLoader(
-        train_dataset,
-        batch_size=config["batch_size"],
-        shuffle=True,
-        num_workers=num_workers,
-        collate_fn=collate_detection_batch,
-        pin_memory=device.type == "cuda",
-        persistent_workers=num_workers > 0,
-        generator=torch.Generator().manual_seed(config["seed"]),
+    generator = torch.Generator().manual_seed(config["seed"])
+    loader = build_train_loader(train_dataset, config, device, generator)
+    clean_loader = (
+        None
+        if clean_dataset is None
+        else build_train_loader(clean_dataset, config, device, generator)
     )
+    train_scales = config["augment"]["train_scales"]
+    first_clean_epoch = config["epochs"] - config["augment"]["clean_epochs"] + 1
     if isinstance(model, FasterRCNN):
         set_box_regression_loss(model, config["roi_heads"])
     if isinstance(model, RetinaNet):
@@ -432,8 +508,28 @@ def fit_torchvision_detector(
         started = time.perf_counter()
         if is_cuda:
             torch.cuda.reset_peak_memory_stats(device)
+        is_clean_epoch = epoch >= first_clean_epoch
+        epoch_loader = clean_loader if is_clean_epoch and clean_loader is not None else loader
+        input_sizes = None
+        if train_scales and not is_clean_epoch:
+            input_sizes = draw_input_sizes(
+                train_scales,
+                config["min_size"],
+                config["max_size"],
+                len(epoch_loader),
+                np.random.default_rng([config["seed"], epoch]),
+            )
         losses, iteration = train_one_epoch(
-            model, loader, optimizer, scheduler, scaler, config, device, wandb_run, iteration
+            model,
+            epoch_loader,
+            optimizer,
+            scheduler,
+            scaler,
+            config,
+            device,
+            wandb_run,
+            iteration,
+            input_sizes,
         )
         gpu_memory_gb = torch.cuda.max_memory_allocated(device) / BYTES_PER_GB if is_cuda else None
         predictions, _ = detect_frames(
@@ -483,8 +579,9 @@ def run_torchvision_smoke(config: dict, tables: AnnotationTables, wandb_run: wan
     The detector is rebuilt with the small `min_size` and `max_size` of `SMOKE_OVERRIDES`.
     The batch holds the first two frames of the smoke train clip, so the epoch is a single
     step, followed by monitoring on the first two frames of the smoke val clip and their
-    prediction from `best.pt` with one warmup pass. Checkpoints go to a temporary directory
-    that is removed afterwards.
+    prediction from `best.pt` with one warmup pass. The single epoch uses the configured
+    augmentation, with `train_scales` scaled to the smoke input size and no clean epochs.
+    Checkpoints go to a temporary directory that is removed afterwards.
 
     Args:
         config: Resolved configuration.
@@ -492,9 +589,12 @@ def run_torchvision_smoke(config: dict, tables: AnnotationTables, wandb_run: wan
         wandb_run: Disabled W&B run.
     """
     smoke_config = config | SMOKE_OVERRIDES
+    scale = SMOKE_OVERRIDES["min_size"] / config["min_size"]
+    smoke_scales = [round(size * scale) for size in config["augment"]["train_scales"]]
     smoke_config |= {
         "inference": config["inference"] | {"warmup_images": SMOKE_WARMUP_IMAGES},
         "logging": config["logging"] | SMOKE_LOGGING,
+        "augment": config["augment"] | {"train_scales": smoke_scales, "clean_epochs": 0},
     }
     model = build_model(smoke_config)
     smoke_images = (
@@ -504,7 +604,12 @@ def run_torchvision_smoke(config: dict, tables: AnnotationTables, wandb_run: wan
         .head(SMOKE_FRAMES_PER_SPLIT)
     )
     val_frames = smoke_images.filter(pl.col("split") == "val")
-    train_dataset = VisDroneDataset(tables._replace(images=smoke_images), "train", frame_step=1)
+    train_dataset = VisDroneDataset(
+        tables._replace(images=smoke_images),
+        "train",
+        frame_step=1,
+        transform=build_train_transform(smoke_config, is_clean=False),
+    )
     with tempfile.TemporaryDirectory() as work_dir:
         checkpoint_dir = Path(work_dir)
         fit_torchvision_detector(
@@ -539,7 +644,9 @@ def train_torchvision_detector(
 
     Trains on the `train_frames` step of the train clips and monitors on the
     `val_monitoring` step of the val clips (`fit_torchvision_detector`), writing `best.pt`
-    and `last.pt` to `run_dir` and the `training` section of `metrics.json`. A smoke run
+    and `last.pt` to `run_dir` and the `training` section of `metrics.json`. Training frames
+    get the transform of `build_train_transform`; with flips or photometric distortion and
+    `clean_epochs`, the clean epochs use a second dataset with the clean transform. A smoke run
     (`run_dir` None) ignores `model`, rebuilds it at the smoke input size, and writes nothing
     (`run_torchvision_smoke`).
 
@@ -557,13 +664,22 @@ def train_torchvision_detector(
     check_training_budget(config)
     frame_steps = load_frame_steps(DATA_CONFIG_PATH)
     train_step, val_step = frame_steps[config["train_frames"]], frame_steps["val_monitoring"]
-    train_dataset = VisDroneDataset(tables, "train", train_step)
+    augment = config["augment"]
+    train_dataset = VisDroneDataset(
+        tables, "train", train_step, build_train_transform(config, is_clean=False)
+    )
+    has_clean_dataset = augment["clean_epochs"] > 0 and (augment["hflip"] or augment["photometric"])
+    clean_dataset = (
+        VisDroneDataset(tables, "train", train_step, build_train_transform(config, is_clean=True))
+        if has_clean_dataset
+        else None
+    )
     val_images = tables.images.filter(pl.col("split") == "val")
     monitor_tables = tables._replace(images=select_frames(val_images, val_step))
     device = select_device()
     started = time.perf_counter()
     history, best_epoch = fit_torchvision_detector(
-        model, config, train_dataset, monitor_tables, run_dir, device, wandb_run
+        model, config, train_dataset, monitor_tables, run_dir, device, wandb_run, clean_dataset
     )
     gpu_hours = (time.perf_counter() - started) / 3600
     training = describe_run(config, REPO_ROOT) | {

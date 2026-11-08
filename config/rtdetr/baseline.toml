@@ -50,8 +50,21 @@ auxiliary_loss = true  # also apply the losses to every decoder layer, the encod
 
 [inference]
 score_thresh = 0.001  # minimum sigmoid class score of kept detections (strictly above), in [0, 1]; low so that AP integrates the full precision-recall curve
-detections_per_img = 300  # top-scoring (query, class) pairs kept per frame without NMS, at most num_queries (the query limit) and 500
+detections_per_img = 300  # top-scoring (query, class) pairs kept per frame without NMS, at most num_queries times the 8 classes and 500 (the submission limit); 300, the checkpoint default, means one pair per query on average
 warmup_images = 10  # untimed forward passes on the first frame before measuring ms/image
+hflip = false  # predict on horizontally flipped frames and mirror the boxes back: true for the flipped member of a flip TTA fusion (config/postprocess), false predicts the frames as they are
+
+[augment]
+# Training augmentation of the shared loop, a subset of the official RT-DETRv2 recipe (https://github.com/lyuwenyu/RT-DETR/blob/main/rtdetrv2_pytorch/configs/rtdetrv2/include/dataloader.yml); all off in the baseline, which trains on unmodified frames
+hflip = false  # flip each training frame and its boxes horizontally with probability 0.5 (recipe RandomHorizontalFlip)
+photometric = false  # torchvision RandomPhotometricDistort with p 0.5 and its default ranges: brightness 0.875 to 1.125, contrast and saturation 0.5 to 1.5, hue -0.05 to 0.05, and channel permutation, each applied with probability 0.5 (recipe p 0.5)
+train_scales = []  # multi-scale training: shorter frame sides in px, one drawn uniformly per batch, with max_size scaled by the same factor; repeated values are drawn more often; empty trains every batch at min_size
+clean_epochs = 0  # last epochs trained without hflip, photometric, and train_scales, integer from 0 to epochs - 1 (the recipe switches them off for its last epoch of 72)
+
+[ignored_regions]
+# Ignored regions (crowds, dense parking, VisDrone others) in the training frames
+mask = false  # fill the ignored regions of every training frame with fill, except the pixels of labelled boxes; monitoring, val, and test frames stay unmodified; false trains on unmodified frames, where ignored regions act as background
+fill = [118, 124, 120]  # RGB fill colour, three integers 0 to 255: the train mean colour (01_eda.ipynb section 12.3)
 
 [logging]
 log_interval = 50  # batches between W&B points of the training losses and LR

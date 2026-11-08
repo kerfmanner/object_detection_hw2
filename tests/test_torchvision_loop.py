@@ -1,6 +1,8 @@
 import json
 import math
+from functools import partial
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import polars as pl
@@ -8,6 +10,7 @@ import pytest
 import torch
 from torch.utils.data import DataLoader, Subset
 from torchvision.io import write_jpeg
+from torchvision.models.detection.transform import GeneralizedRCNNTransform
 
 import src.training.torchvision_loop
 from src.data.annotations import AnnotationTables
@@ -359,3 +362,47 @@ def test_training_requires_amp_dtype_and_grad_clip_norm_before_any_checkpoint(
         train_torchvision_detector(build_model(config), config, synthetic_root, run_dir, wandb_run)
     wandb_run.finish()
     assert not any(run_dir.iterdir())
+
+
+def test_augmented_epochs_vary_frames_and_sizes_and_the_clean_epoch_does_not(
+    synthetic_root: Path, synthetic_data_config: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tiny_config = load_tiny_config(FASTER_RCNN_BASELINE)
+    ignored: dict = tiny_config["ignored_regions"]
+    augment = {"hflip": True, "photometric": True, "train_scales": [48, 80], "clean_epochs": 1}
+    config = tiny_config | {
+        "epochs": 2,
+        "batch_size": 4,
+        "lr": 0.001,
+        "num_workers": 0,
+        "augment": augment,
+        "ignored_regions": ignored | {"mask": True},
+        "logging": tiny_config["logging"] | {"sample_frames": 1},
+    }
+    transforms: list[partial] = []
+    sizes: list[list[tuple[int, int]] | None] = []
+    train_epoch = src.training.torchvision_loop.train_one_epoch
+
+    def record_epoch(*args: Any) -> tuple[dict[str, float], int]:
+        transform = args[1].dataset.transform
+        assert isinstance(transform, partial)
+        transforms.append(transform)
+        sizes.append(args[9])
+        return train_epoch(*args)
+
+    monkeypatch.setattr(src.training.torchvision_loop, "train_one_epoch", record_epoch)
+    model = build_model(config)
+    wandb_run = init_wandb(config, WANDB_SETTINGS, run_dir=None)
+    run_dir = synthetic_root.parent / "augmented_run"
+    run_dir.mkdir()
+    train_torchvision_detector(model, config, synthetic_root, run_dir, wandb_run)
+    wandb_run.finish()
+    augmented, clean = (transform.keywords for transform in transforms)
+    assert augmented["is_flip_enabled"] and augmented["photometric"] is not None
+    assert clean == {"mask_fill": ignored["fill"], "photometric": None, "is_flip_enabled": False}
+    augmented_sizes, clean_sizes = sizes
+    assert augmented_sizes is not None and set(augmented_sizes) <= {(48, 72), (80, 120)}
+    assert clean_sizes is None
+    transform = model.transform
+    assert isinstance(transform, GeneralizedRCNNTransform)
+    assert (transform.min_size, transform.max_size) == ((64,), 96)

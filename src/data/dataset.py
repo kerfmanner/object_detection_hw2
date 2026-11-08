@@ -8,6 +8,7 @@ from torch.utils.data import Dataset
 from torchvision.io import ImageReadMode, decode_image
 
 from src.data.annotations import BOX_COLUMNS, AnnotationTables
+from src.data.augment import FrameTransform
 from src.data.boxes import convert_xywh_to_xyxy
 
 
@@ -111,12 +112,20 @@ class VisDroneDataset(Dataset):
         tables: Annotation tables from `load_annotations`.
         split: Configured split name, `train` or `val`.
         frame_step: Frame step from `load_frame_steps`; 1 keeps all frames.
+        transform: Optional transform of each decoded frame and its target, e.g. from
+            `build_train_transform`; None returns them unchanged.
 
     Attributes:
         images: Image table of the selected frames, ordered by `image_id`.
     """
 
-    def __init__(self, tables: AnnotationTables, split: str, frame_step: int) -> None:
+    def __init__(
+        self,
+        tables: AnnotationTables,
+        split: str,
+        frame_step: int,
+        transform: FrameTransform | None = None,
+    ) -> None:
         self.images = select_frames(tables.images.filter(pl.col("split") == split), frame_step)
         self.images = self.images.sort("image_id")
         self.image_ids = self.images["image_id"].to_numpy()
@@ -131,6 +140,7 @@ class VisDroneDataset(Dataset):
         self.object_labels = torch.from_numpy(objects["class_id"].to_numpy().astype(np.int64))
         self.ignored_bounds = index_frame_rows(ignored, self.image_ids)
         self.ignored_boxes = select_xyxy_boxes(ignored)
+        self.transform = transform
 
     def __len__(self) -> int:
         return len(self.image_ids)
@@ -151,4 +161,6 @@ class VisDroneDataset(Dataset):
             "labels": self.object_labels[object_start:object_end].clone(),
             "ignored_boxes": self.ignored_boxes[ignored_start:ignored_end].clone(),
         }
+        if self.transform is not None:
+            return self.transform(image, target)
         return image, target

@@ -1,0 +1,3 @@
+# Tests filling the ignored regions of the training frames with the train mean colour, except labelled boxes, instead of training them as background: unlabelled crowds and dense parking in 72 to 75% of frames (01_eda.ipynb section 7) currently teach queries that objects there are background, while the evaluator ignores detections inside them
+[ignored_regions]
+mask = true  # fill colour from the baseline: the train mean colour [118, 124, 120]

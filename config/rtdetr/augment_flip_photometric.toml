@@ -1,0 +1,5 @@
+# Ablation of augment_recipe without multi-scale training: horizontal flip and photometric distortion only (off in the last epoch), to separate the effect of the image-level augmentation from that of the varying input size
+[augment]
+hflip = true  # recipe RandomHorizontalFlip, p 0.5
+photometric = true  # recipe RandomPhotometricDistort, p 0.5, torchvision default ranges
+clean_epochs = 1  # epoch 7 of 7 trains on unmodified frames, as in augment_recipe

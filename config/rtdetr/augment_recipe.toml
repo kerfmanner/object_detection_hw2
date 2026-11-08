@@ -1,0 +1,6 @@
+# Tests the RT-DETRv2 recipe augmentation (horizontal flip, photometric distortion, multi-scale training, all off in the last epoch) instead of unmodified frames, against the baseline's peak at epoch 2 of 7 and its decline while the training losses keep falling, which suggests overfitting to the 56 training clips
+[augment]
+hflip = true  # recipe RandomHorizontalFlip, p 0.5
+photometric = true  # recipe RandomPhotometricDistort, p 0.5, torchvision default ranges
+train_scales = [832, 896, 960, 1024, 1024, 1024, 1088, 1152, 1216]  # the recipe draws 480 to 800 px around its 640 px input with 640 three times (factors 0.75 to 1.25); here 0.81 to 1.19 of min_size 1024 in 64 px steps with 1024 three times, narrower because batch 2 at 1024 px already peaks at 7.1 GB of the 12 GB (timing_b2) and activation memory grows with the square of the side (about 9.6 GB at 1216 px); the mean pixel count is 1.2% above 1024 px, so the epoch time and the 1.5 GPU hour budget stay as in the baseline
+clean_epochs = 1  # epoch 7 of 7 trains on unmodified frames at 1024 px, as the recipe's last epoch of 72
