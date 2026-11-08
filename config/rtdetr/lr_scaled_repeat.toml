@@ -1,0 +1,4 @@
+# Seed repeat of lr_scaled (seed 7 instead of 42): its gain over the baseline (+0.0096 mAP) comes almost entirely from bus and truck, so this run tells whether that gain survives another seed
+lr = 0.000025  # as lr_scaled: baseline 1e-4 times 4 / 16, the linear scaling rule (https://arxiv.org/abs/1706.02677)
+backbone_lr = 0.0000025  # as lr_scaled: baseline 1e-5 times 4 / 16, so the backbone LR stays 0.1 times the encoder and decoder LR
+seed = 7  # seed of the new class heads and denoising embedding, the shuffling order, and the denoising noise; differs from the baseline's 42, so the experiment name gets the -s7 suffix
