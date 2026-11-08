@@ -301,6 +301,7 @@ def test_baseline_and_timing_configs_are_valid_full_runs(baseline_config: dict) 
     [
         ("lr_scaled", {"lr": 2.5e-5, "backbone_lr": 2.5e-6}),
         ("denoising_groups", {"queries": {"num_denoising": 200}}),
+        ("step2", {"train_frames": "train_final", "epochs": 3}),
     ],
 )
 def test_experiment_configs_change_one_factor_of_the_baseline(
