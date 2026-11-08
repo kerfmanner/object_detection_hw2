@@ -1,0 +1,5 @@
+# Inference only, on rtdetr-baseline: keeps the 500 top-scoring (query, class) pairs per frame instead of 300, the submission limit that the other families already use; every val frame hits the 300 cap, so lower-ranked pairs may add recall at the tail of the precision-recall curve
+source = "rtdetr-baseline"  # trained run whose best.pt predicts
+
+[inference]
+detections_per_img = 500  # baseline 300; at most num_queries 300 times the 8 classes and the 500 box limit

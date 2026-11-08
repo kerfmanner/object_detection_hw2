@@ -1,0 +1,5 @@
+# Inference only, on rtdetr-baseline: predicts horizontally flipped frames and mirrors the boxes back; alone it measures how far the model is from flip-invariant, and it is the second member of the flip TTA fusion postprocess-ens_rtdetr_hflip
+source = "rtdetr-baseline"  # trained run whose best.pt predicts
+
+[inference]
+hflip = true  # baseline false

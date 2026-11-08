@@ -317,11 +317,11 @@ def build_rtdetr(config: dict) -> RTDetrDetector:
         )
     queries, matcher, loss = config["queries"], config["matcher"], config["loss"]
     inference = config["inference"]
-    max_detections = min(queries["num_queries"], MAX_DETECTIONS_PER_IMG)
+    max_detections = min(queries["num_queries"] * len(CLASS_NAMES), MAX_DETECTIONS_PER_IMG)
     if not 1 <= inference["detections_per_img"] <= max_detections:
         raise ValueError(
-            f"detections_per_img must be 1 to {max_detections} (num_queries and the "
-            f"{MAX_DETECTIONS_PER_IMG} box limit), got {inference['detections_per_img']}"
+            f"detections_per_img must be 1 to {max_detections} (num_queries times the classes "
+            f"and the {MAX_DETECTIONS_PER_IMG} box limit), got {inference['detections_per_img']}"
         )
     with torch.random.fork_rng(devices=[]):
         torch.manual_seed(config["seed"])

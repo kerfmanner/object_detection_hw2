@@ -4,6 +4,22 @@ import polars as pl
 from src.data.annotations import BOX_COLUMNS
 
 
+def mirror_detections(detections: np.ndarray, width: int) -> np.ndarray:
+    """Map detections on a horizontally flipped frame back to the original frame.
+
+    Args:
+        detections: Array (n, 6) with the class id, score, and `x, y, w, h` in px of the
+            flipped frame.
+        width: Frame width in px.
+
+    Returns:
+        A new array (n, 6) with `x` replaced by `width - x - w`.
+    """
+    mirrored = detections.copy()
+    mirrored[:, 2] = width - detections[:, 2] - detections[:, 4]
+    return mirrored
+
+
 def build_prediction_table(
     image_ids: pl.Series, frame_detections: list[np.ndarray]
 ) -> pl.DataFrame:

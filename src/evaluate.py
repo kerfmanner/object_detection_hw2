@@ -13,6 +13,7 @@ from src.evaluation.coco_metrics import MAX_TEST_WIDTH, evaluate_detections
 logger = logging.getLogger(__name__)
 
 DATA_CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "data.toml"
+RESULTS_PATH = Path(__file__).resolve().parents[1] / "experiments" / "results.csv"
 PREDICTIONS_FILE = "val_predictions.parquet"
 METRICS_FILE = "metrics.json"
 REPORTED_FRAME_STEP = 1
@@ -60,6 +61,40 @@ RESULTS_COLUMNS = (
 METRIC_DECIMALS = 4
 
 
+def find_run_dir(results_path: Path, experiment: str) -> Path:
+    """Look up the run directory of an experiment in `experiments/results.csv`.
+
+    Args:
+        results_path: Path of `experiments/results.csv`.
+        experiment: Experiment name, e.g. `rtdetr-baseline`.
+
+    Returns:
+        The `run_dir` of the experiment's only row, relative to the repository root.
+    """
+    rows = pl.read_csv(results_path, columns=["experiment", "run_dir"]).filter(
+        pl.col("experiment") == experiment
+    )
+    if rows.height != 1:
+        raise ValueError(f"{results_path} has {rows.height} rows for {experiment!r}, expected 1")
+    return Path(rows["run_dir"].item())
+
+
+def check_full_val_inference(metrics_path: Path, val_frames: int) -> None:
+    """Check that a run's `inference` record covers all val frames at frame step 1.
+
+    Args:
+        metrics_path: Path of the run's `metrics.json`.
+        val_frames: Number of val frames.
+    """
+    inference = json.loads(metrics_path.read_text()).get("inference", {})
+    expected = {"split": "val", "frame_step": REPORTED_FRAME_STEP, "num_frames": val_frames}
+    recorded = {key: inference.get(key) for key in expected}
+    if recorded != expected:
+        raise ValueError(
+            f"{metrics_path} records inference {recorded}, evaluation needs {expected}"
+        )
+
+
 def evaluate_run(run_dir: Path, data_root: Path, data_config_path: Path) -> dict:
     """Evaluate the validation predictions of a run and store them in its `metrics.json`.
 
@@ -80,14 +115,8 @@ def evaluate_run(run_dir: Path, data_root: Path, data_config_path: Path) -> dict
     tables = load_annotations(data_root, load_split_clips(data_config_path))
     val_frames = tables.images.filter(pl.col("split") == "val").height
     metrics_path = run_dir / METRICS_FILE
+    check_full_val_inference(metrics_path, val_frames)
     metrics = json.loads(metrics_path.read_text())
-    inference = metrics.get("inference", {})
-    expected = {"split": "val", "frame_step": REPORTED_FRAME_STEP, "num_frames": val_frames}
-    recorded = {key: inference.get(key) for key in expected}
-    if recorded != expected:
-        raise ValueError(
-            f"{metrics_path} records inference {recorded}, evaluation needs {expected}"
-        )
     predictions = pl.read_parquet(run_dir / PREDICTIONS_FILE)
     metrics["evaluation"] = evaluate_detections(tables, "val", predictions)
     metrics_path.write_text(json.dumps(metrics, indent=2) + "\n")

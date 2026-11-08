@@ -1,4 +1,5 @@
 import json
+import tomllib
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -14,7 +15,7 @@ import src.training.torchvision_loop
 from src.data.annotations import AnnotationTables
 from src.data.classes import CLASS_NAMES
 from src.data.dataset import VisDroneDataset
-from src.evaluate import METRICS_FILE, TRAINING_FIELDS
+from src.evaluate import METRICS_FILE, RESULTS_PATH, TRAINING_FIELDS, find_run_dir
 from src.evaluation.coco_metrics import PREDICTION_COLUMNS, validate_predictions
 from src.inference.torchvision_detectors import MODEL_STATE_KEY, predict_torchvision_frames
 from src.models.registry import build_model
@@ -29,7 +30,8 @@ from src.models.rtdetr import (
     predict_query_boxes,
     resize_and_pad_frames,
 )
-from src.training.experiment import init_wandb, load_experiment_config
+from src.predict import INFERENCE_CONFIG_KEYS
+from src.training.experiment import init_wandb, load_experiment_config, merge_config
 from src.training.rtdetr import build_rtdetr_optimizer
 from src.training.torchvision_loop import (
     BEST_CHECKPOINT,
@@ -249,8 +251,14 @@ def test_only_the_stem_is_frozen_and_invalid_settings_are_rejected(
     with pytest.raises(ValueError, match="trainable_backbone_layers must be 0 to 5"):
         freeze_backbone_stages(baseline_model.detector, 6)
     inference = baseline_config["inference"]
-    with pytest.raises(ValueError, match="detections_per_img must be 1 to 300"):
-        build_rtdetr(baseline_config | {"inference": inference | {"detections_per_img": 301}})
+    with pytest.raises(ValueError, match="detections_per_img must be 1 to 500"):
+        build_rtdetr(baseline_config | {"inference": inference | {"detections_per_img": 501}})
+    few_queries = baseline_config["queries"] | {"num_queries": 50}
+    with pytest.raises(ValueError, match="detections_per_img must be 1 to 400"):
+        build_rtdetr(
+            baseline_config
+            | {"queries": few_queries, "inference": inference | {"detections_per_img": 401}}
+        )
     with pytest.raises(ValueError, match="RT-DETR supports arch"):
         build_rtdetr(baseline_config | {"arch": "PekingU/rtdetr_r50vd"})
 
@@ -302,6 +310,22 @@ def test_baseline_and_timing_configs_are_valid_full_runs(baseline_config: dict) 
         ("lr_scaled", {"lr": 2.5e-5, "backbone_lr": 2.5e-6}),
         ("denoising_groups", {"queries": {"num_denoising": 200}}),
         ("step2", {"train_frames": "train_final", "epochs": 3}),
+        (
+            "augment_recipe",
+            {
+                "augment": {
+                    "hflip": True,
+                    "photometric": True,
+                    "train_scales": [832, 896, 960, 1024, 1024, 1024, 1088, 1152, 1216],
+                    "clean_epochs": 1,
+                }
+            },
+        ),
+        (
+            "augment_flip_photometric",
+            {"augment": {"hflip": True, "photometric": True, "clean_epochs": 1}},
+        ),
+        ("mask_ignored", {"ignored_regions": {"mask": True}}),
     ],
 )
 def test_experiment_configs_change_one_factor_of_the_baseline(
@@ -367,9 +391,11 @@ class FixedRTDetrOutputs(torch.nn.Module):
         self.register_buffer("logits", logits)
         self.register_buffer("pred_boxes", pred_boxes)
         self.input_shapes: list[tuple[int, ...]] = []
+        self.inputs: list[torch.Tensor] = []
 
     def return_fixed_outputs(self, pixel_values: torch.Tensor) -> SimpleNamespace:
         self.input_shapes.append(tuple(pixel_values.shape))
+        self.inputs.append(pixel_values.clone())
         return SimpleNamespace(logits=self.logits, pred_boxes=self.pred_boxes)
 
     forward = return_fixed_outputs
@@ -472,3 +498,64 @@ def test_query_boxes_keep_one_row_per_query_in_score_order(tiny_model: RTDetrDet
     detections = tiny_model([frame])[0]
     best = queries.row(0, named=True)
     assert best["score"] == pytest.approx(detections["scores"][0].item(), abs=1e-6)
+
+
+INFERENCE_CONFIGS = sorted(RTDETR_DIR.glob("infer_*.toml"))
+
+
+@pytest.mark.parametrize("config_path", INFERENCE_CONFIGS, ids=lambda path: path.stem)
+def test_inference_configs_change_only_inference_settings_of_the_reference(
+    baseline_config: dict, config_path: Path
+) -> None:
+    overrides = tomllib.loads(config_path.read_text())
+    assert config_path.read_text().startswith("# Inference only, on rtdetr-baseline: ")
+    assert overrides.pop("source") == "rtdetr-baseline"
+    assert set(overrides) <= set(INFERENCE_CONFIG_KEYS) and overrides
+    assert find_run_dir(RESULTS_PATH, "rtdetr-baseline").name == "20261106-1742"
+    config = merge_config(baseline_config, overrides)
+    if "min_size" in overrides:
+        assert config["max_size"] == round(1824 * config["min_size"] / 1024)
+
+
+def test_500_detections_rank_several_classes_of_the_same_query() -> None:
+    logits = torch.linspace(-5, 5, 3 * len(CLASS_NAMES)).reshape(1, 3, len(CLASS_NAMES))
+    pred_boxes = torch.full((1, 3, 4), 0.5)
+    sizes = ([(100, 200)], [(100, 200)], (128, 224))
+    [frame] = convert_rtdetr_outputs(
+        logits, pred_boxes, *sizes, score_thresh=0.0, detections_per_img=20
+    )
+    assert len(frame["labels"]) == 20 > logits.shape[1]
+    assert frame["scores"].tolist() == sorted(frame["scores"].tolist(), reverse=True)
+    config = load_experiment_config(RTDETR_DIR / "baseline.toml")
+    inference = config["inference"] | {"detections_per_img": 500}
+    model = build_rtdetr(config | TINY_INPUT | {"inference": inference})
+    model.eval()
+    with torch.inference_mode():
+        [detections] = model([torch.rand(3, 48, 64)])
+    assert len(detections["labels"]) == 500
+
+
+def test_flipped_predictions_are_mirrored_back_to_the_original_frame(
+    baseline_config: dict, tmp_path: Path
+) -> None:
+    frame = torch.zeros((3, 48, 64), dtype=torch.uint8)
+    frame[:, :, :8] = 255
+    frame_path = tmp_path / "frame.jpg"
+    write_jpeg(frame, str(frame_path))
+    images = pl.DataFrame({"image_id": ["clip_0000001"], "file_path": [str(frame_path)]})
+    logits = torch.full((1, 1, len(CLASS_NAMES)), -20.0)
+    logits[0, 0, 7] = 2.0
+    outputs = FixedRTDetrOutputs(logits, torch.tensor([[[0.25, 0.25, 0.25, 0.125]]]))
+    model = RTDetrDetector(
+        cast(RTDetrV2ForObjectDetection, outputs),
+        min_size=48,
+        max_size=64,
+        score_thresh=0.001,
+        detections_per_img=1,
+    )
+    torch.save({MODEL_STATE_KEY: model.state_dict()}, tmp_path / "best.pt")
+    config = baseline_config | {"inference": baseline_config["inference"] | {"hflip": True}}
+    predictions, _ = predict_torchvision_frames(model, tmp_path / "best.pt", images, config)
+    assert predictions.select("x", "y", "w", "h").row(0) == pytest.approx((40, 12, 16, 8))
+    [flipped] = outputs.inputs[-1]
+    assert flipped[:, 4:44, 58:62].min() > 0.8 and flipped[:, 4:44, 2:50].max() < 0.2

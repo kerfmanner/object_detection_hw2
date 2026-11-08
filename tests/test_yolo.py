@@ -90,6 +90,35 @@ def test_predictions_on_a_synthetic_frame_keep_image_ids_classes_and_boxes(
     }
 
 
+def test_flipped_frames_are_predicted_and_their_boxes_mirrored_back(
+    baseline_config: dict, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    pixels = torch.zeros((3, FRAME_HEIGHT, FRAME_WIDTH), dtype=torch.uint8)
+    pixels[:, :, : FRAME_WIDTH // 4] = 255
+    frame_path = tmp_path / "frame.jpg"
+    write_jpeg(pixels, str(frame_path))
+    images = pl.DataFrame({"image_id": ["clip_0000001"], "file_path": [str(frame_path)]})
+    detector = FakeDetector()
+    seen: list[np.ndarray] = []
+    predict = detector.predict
+
+    def record_frame(frame: np.ndarray, **options: object) -> list[Results]:
+        seen.append(frame)
+        return predict(frame, **options)
+
+    monkeypatch.setattr(detector, "predict", record_frame)
+    monkeypatch.setattr(src.inference.yolo, "load_yolo_checkpoint", lambda path: detector)
+    config = baseline_config | {"inference": baseline_config["inference"] | {"hflip": True}}
+    predictions, _ = predict_yolo_frames(torch.nn.Identity(), tmp_path / "best.pt", images, config)
+    mirrored = np.array(EXPECTED_DETECTIONS, dtype=np.float64)
+    mirrored[:, 2] = FRAME_WIDTH - mirrored[:, 2] - mirrored[:, 4]
+    np.testing.assert_allclose(predictions.drop("image_id").to_numpy(), mirrored)
+    assert (
+        seen[-1][:, -FRAME_WIDTH // 8 :].min() > 200 and seen[-1][:, : FRAME_WIDTH // 2].max() < 50
+    )
+    assert seen[-1].flags["C_CONTIGUOUS"]
+
+
 def test_checkpoint_with_other_classes_is_rejected(baseline_config: dict) -> None:
     coco_checkpoint = build_yolo(baseline_config).ckpt_path
     assert coco_checkpoint is not None

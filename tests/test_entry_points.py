@@ -1,5 +1,4 @@
 import json
-import shutil
 import tomllib
 from pathlib import Path
 
@@ -15,6 +14,7 @@ from src.data.annotations import BOX_COLUMNS, AnnotationTables
 from src.evaluate import (
     METRICS_FILE,
     PREDICTIONS_FILE,
+    RESULTS_COLUMNS,
     TRAINING_FIELDS,
     evaluate_run,
     format_results_row,
@@ -23,17 +23,23 @@ from src.evaluation.coco_metrics import PREDICTION_COLUMNS
 from src.inference.torchvision_detectors import MODEL_STATE_KEY
 from src.models import registry
 from src.models.registry import build_model
-from src.predict import TEST_PREDICTIONS_FILE, run_prediction
+from src.predict import (
+    TEST_PREDICTIONS_FILE,
+    create_inference_run,
+    load_run_config,
+    run_prediction,
+)
 from src.submission.validate import validate_submission
 from src.train import run_training
 from src.training.experiment import CONFIG_FILE, format_toml, load_experiment_config
-from tests.conftest import SYNTHETIC_SPLIT_CLIPS
 from tests.test_experiment import BASELINE_TOML
 from tests.test_smoke import FASTER_RCNN_BASELINE, RETINANET_BASELINE
 
 TRAINING_ONLY_FIELDS_ADDED_WITH_RTDETR = ("amp_dtype", "grad_clip_norm")
 TRAINING_ONLY_ROI_HEADS_FIELDS_ADDED_WITH_GIOU = ("box_loss", "giou_loss_weight")
 TRAINING_ONLY_TABLES_ADDED_WITH_FOCAL_LOSS = ("focal_loss",)
+TRAINING_ONLY_TABLES_ADDED_WITH_AUGMENTATION = ("augment", "ignored_regions")
+INFERENCE_FIELDS_ADDED_WITH_FLIP = ("hflip",)
 
 
 @pytest.fixture
@@ -100,27 +106,15 @@ def test_training_creates_the_run_directory_with_the_resolved_config(
 def prediction_run(toy_family: Path, tmp_path: Path) -> Path:
     run_dir = tmp_path / "runs" / "toy-baseline" / "20261106-0900"
     run_dir.mkdir(parents=True)
-    config = tomllib.loads(BASELINE_TOML) | {"run": {"experiment": "toy-baseline", "family": "toy"}}
+    run = {
+        "experiment": "toy-baseline",
+        "family": "toy",
+        "baseline": (toy_family / "baseline.toml").as_posix(),
+    }
+    config = tomllib.loads(BASELINE_TOML) | {"run": run}
     (run_dir / CONFIG_FILE).write_text(format_toml(config))
     (run_dir / METRICS_FILE).write_text(json.dumps({"training": {"seed": 42}}))
     return run_dir
-
-
-@pytest.fixture
-def prediction_data(
-    synthetic_root: Path, synthetic_annotations: AnnotationTables, tmp_path: Path
-) -> tuple[Path, Path]:
-    data_root = tmp_path / "data"
-    shutil.copytree(synthetic_root, data_root)
-    (data_root / "test_images.csv").write_text(
-        "image_id,file_name,clip,frame,width,height\n"
-        "clip_001_0000001,test/images/clip_001/0000001.jpg,clip_001,1,64,48\n"
-        "clip_001_0000002,test/images/clip_001/0000002.jpg,clip_001,2,64,48\n"
-    )
-    config_path = tmp_path / "data.toml"
-    splits = "\n".join(f"{split} = {json.dumps(c)}" for split, c in SYNTHETIC_SPLIT_CLIPS.items())
-    config_path.write_text(f"[splits]\n{splits}\n")
-    return data_root, config_path
 
 
 def test_val_prediction_writes_parquet_and_inference_record_for_evaluate(
@@ -204,8 +198,18 @@ def test_runs_resolved_before_training_only_fields_were_added_still_predict_and_
     baseline = load_experiment_config(baseline_path)
     experiment = baseline["run"]["experiment"]
     resolved = baseline | {"min_size": 64, "max_size": 96}
-    removed = TRAINING_ONLY_FIELDS_ADDED_WITH_RTDETR + TRAINING_ONLY_TABLES_ADDED_WITH_FOCAL_LOSS
+    removed = (
+        TRAINING_ONLY_FIELDS_ADDED_WITH_RTDETR
+        + TRAINING_ONLY_TABLES_ADDED_WITH_FOCAL_LOSS
+        + TRAINING_ONLY_TABLES_ADDED_WITH_AUGMENTATION
+    )
     legacy = {key: value for key, value in resolved.items() if key not in removed}
+    inference: dict = baseline["inference"]
+    legacy["inference"] = {
+        key: value
+        for key, value in inference.items()
+        if key not in INFERENCE_FIELDS_ADDED_WITH_FLIP
+    }
     assert set(TRAINING_ONLY_FIELDS_ADDED_WITH_RTDETR) <= set(resolved) - set(legacy)
     assert ("focal_loss" in resolved) == (baseline_path == RETINANET_BASELINE)
     if "roi_heads" in baseline:
@@ -240,3 +244,136 @@ def test_runs_resolved_before_training_only_fields_were_added_still_predict_and_
     assert csv_path == run_dir / TEST_PREDICTIONS_FILE
     test_images = pl.read_csv(data_root / "test_images.csv")
     validate_submission(csv_path, test_images)
+
+
+def test_runs_resolved_before_an_inference_option_existed_get_its_baseline_value(
+    tmp_path: Path,
+) -> None:
+    config = load_experiment_config(FASTER_RCNN_BASELINE)
+    legacy = config | {"inference": config["inference"] | {"score_thresh": 0.01}}
+    del legacy["inference"]["hflip"]
+    (tmp_path / CONFIG_FILE).write_text(format_toml(legacy))
+    loaded = load_run_config(tmp_path)
+    assert loaded["inference"] == config["inference"] | {"score_thresh": 0.01}
+    assert loaded["inference"]["hflip"] is False
+
+
+SOURCE_TRAINING = dict.fromkeys(TRAINING_FIELDS, 1) | {
+    "config": "config/toy/baseline.toml",
+    "commit": "abc1234",
+    "notes": "toy baseline",
+    "history": [{"epoch": 1}],
+}
+
+
+@pytest.fixture
+def results_path(prediction_run: Path, tmp_path: Path) -> Path:
+    (prediction_run / METRICS_FILE).write_text(json.dumps({"training": SOURCE_TRAINING}))
+    (prediction_run / "best.pt").write_bytes(b"checkpoint")
+    path = tmp_path / "results.csv"
+    row = dict.fromkeys(RESULTS_COLUMNS, "") | {
+        "experiment": "toy-baseline",
+        "run_dir": prediction_run.as_posix(),
+    }
+    pl.DataFrame([row]).write_csv(path)
+    return path
+
+
+def test_an_inference_run_predicts_with_its_source_checkpoint_and_new_settings(
+    toy_family: Path,
+    prediction_run: Path,
+    results_path: Path,
+    prediction_data: tuple[Path, Path],
+    synthetic_annotations: AnnotationTables,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config_path = toy_family / "infer_low_score.toml"
+    config_path.write_text(
+        '# Lower score threshold\nsource = "toy-baseline"\n\n[inference]\nscore_threshold = 0.01\n'
+    )
+    run_dir = create_inference_run(config_path, tmp_path / "runs", results_path)
+    assert run_dir.parent == tmp_path / "runs" / "toy-infer_low_score"
+    assert (run_dir / "best.pt").is_symlink() and (
+        run_dir / "best.pt"
+    ).read_bytes() == b"checkpoint"
+    assert not (run_dir / "best.pt").readlink().is_absolute()
+    config = tomllib.loads((run_dir / CONFIG_FILE).read_text())
+    source_config = tomllib.loads((prediction_run / CONFIG_FILE).read_text())
+    assert config["inference"] == {"score_threshold": 0.01}
+    assert {k: v for k, v in config.items() if k not in ("inference", "run")} == {
+        k: v for k, v in source_config.items() if k not in ("inference", "run")
+    }
+    assert config["run"] == source_config["run"] | {
+        "experiment": "toy-infer_low_score",
+        "config": config_path.as_posix(),
+        "source_run": prediction_run.as_posix(),
+    }
+    training = json.loads((run_dir / METRICS_FILE).read_text())["training"]
+    assert training["notes"] == "Lower score threshold"
+    assert training["config"] == config_path.as_posix()
+    assert training["history"] == SOURCE_TRAINING["history"]
+    assert training["gpu_hours"] == SOURCE_TRAINING["gpu_hours"]
+    assert (training["source_run"], training["source_commit"], training["source_notes"]) == (
+        prediction_run.as_posix(),
+        "abc1234",
+        "toy baseline",
+    )
+    val_objects = synthetic_annotations.objects.filter(pl.col("split") == "val")
+    ground_truth = val_objects.select(
+        "image_id", "class_id", pl.lit(0.9).alias("score"), pl.col(BOX_COLUMNS).cast(pl.Float64)
+    )
+
+    def predict_ground_truth(
+        model: torch.nn.Module, checkpoint_path: Path, images: pl.DataFrame, config: dict
+    ) -> tuple[pl.DataFrame, float]:
+        assert checkpoint_path == run_dir / "best.pt"
+        assert config["inference"]["score_threshold"] == 0.01
+        return ground_truth, 7.0
+
+    monkeypatch.setattr(src.predict, "predict_frames", predict_ground_truth)
+    data_root, data_config = prediction_data
+    run_prediction(run_dir, "val", data_root, data_config)
+    metrics = evaluate_run(run_dir, data_root, data_config)
+    assert metrics["evaluation"]["map"] == 1.0
+    _, row = format_results_row(run_dir, metrics).splitlines()
+    assert row.startswith(f"toy-infer_low_score,{config_path.as_posix()},{run_dir.as_posix()},")
+
+
+@pytest.mark.parametrize(
+    ("content", "message"),
+    [
+        ('# Lower LR\nsource = "toy-baseline"\nlr = 0.001\n', "may only set"),
+        ("# No source\n\n[inference]\nscore_threshold = 0.01\n", "must set 'source'"),
+        ('# Unknown\nsource = "toy-other"\n', "0 rows for 'toy-other'"),
+    ],
+)
+def test_inference_configs_change_only_inference_settings_of_a_known_run(
+    toy_family: Path, results_path: Path, tmp_path: Path, content: str, message: str
+) -> None:
+    config_path = toy_family / "infer_bad.toml"
+    config_path.write_text(content)
+    with pytest.raises(ValueError, match=message):
+        create_inference_run(config_path, tmp_path / "runs", results_path)
+    assert not (tmp_path / "runs" / "toy-infer_bad").exists()
+
+
+def test_inference_runs_need_a_trained_source_of_their_family(
+    toy_family: Path, prediction_run: Path, results_path: Path, tmp_path: Path
+) -> None:
+    other_family = tmp_path / "config" / "other"
+    other_family.mkdir()
+    (other_family / "infer_x.toml").write_text('# Other family\nsource = "toy-baseline"\n')
+    with pytest.raises(ValueError, match="is in family 'other'"):
+        create_inference_run(other_family / "infer_x.toml", tmp_path / "runs", results_path)
+    config_path = toy_family / "infer_x.toml"
+    config_path.write_text('# Same settings\nsource = "toy-baseline"\n')
+    run_dir = create_inference_run(config_path, tmp_path / "runs", results_path)
+    results = pl.read_csv(results_path, infer_schema=False)
+    chained = results.with_columns(
+        pl.lit("toy-infer_x").alias("experiment"), pl.lit(run_dir.as_posix()).alias("run_dir")
+    )
+    pl.concat([results, chained]).write_csv(results_path)
+    (toy_family / "infer_y.toml").write_text('# Chained\nsource = "toy-infer_x"\n')
+    with pytest.raises(ValueError, match="must be a trained run"):
+        create_inference_run(toy_family / "infer_y.toml", tmp_path / "runs", results_path)

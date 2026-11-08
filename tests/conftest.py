@@ -1,4 +1,5 @@
 import json
+import shutil
 import tomllib
 from pathlib import Path
 
@@ -144,3 +145,20 @@ def synthetic_root(tmp_path_factory: pytest.TempPathFactory) -> Path:
 @pytest.fixture(scope="session")
 def synthetic_annotations(synthetic_root: Path) -> AnnotationTables:
     return load_annotations(synthetic_root, SYNTHETIC_SPLIT_CLIPS)
+
+
+@pytest.fixture
+def prediction_data(
+    synthetic_root: Path, synthetic_annotations: AnnotationTables, tmp_path: Path
+) -> tuple[Path, Path]:
+    data_root = tmp_path / "data"
+    shutil.copytree(synthetic_root, data_root)
+    (data_root / "test_images.csv").write_text(
+        "image_id,file_name,clip,frame,width,height\n"
+        "clip_001_0000001,test/images/clip_001/0000001.jpg,clip_001,1,64,48\n"
+        "clip_001_0000002,test/images/clip_001/0000002.jpg,clip_001,2,64,48\n"
+    )
+    config_path = tmp_path / "data.toml"
+    splits = "\n".join(f"{split} = {json.dumps(c)}" for split, c in SYNTHETIC_SPLIT_CLIPS.items())
+    config_path.write_text(f"[splits]\n{splits}\n")
+    return data_root, config_path

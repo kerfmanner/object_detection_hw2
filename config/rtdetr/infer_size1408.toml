@@ -1,0 +1,4 @@
+# Inference only, on rtdetr-baseline: frames resized to a shorter side of 1408 px instead of the training size 1024 px (38% larger), for the small objects that limit mAP (AP_small 0.133 against AP_large 0.486); the model then sees every object larger than in training, which may cost AP_large
+source = "rtdetr-baseline"  # trained run whose best.pt predicts
+min_size = 1408  # baseline 1024; shorter frame side at inference in px
+max_size = 2508  # baseline 1824, scaled by the same factor so that 16:9 frames reach min_size

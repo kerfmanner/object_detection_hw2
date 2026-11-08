@@ -24,3 +24,4 @@ iou = 0.5  # NMS IoU threshold, at least 0.5; also used by the per-epoch Ultraly
 max_det = 500  # maximum detections per frame, at most 500; also used by the per-epoch Ultralytics validation
 agnostic_nms = false  # class-agnostic NMS: false keeps per-class NMS; also used by the per-epoch Ultralytics validation
 warmup_images = 10  # untimed forward passes on the first frame before measuring ms/image
+hflip = false  # predict on horizontally flipped frames and mirror the boxes back: true for the flipped member of a flip TTA fusion (config/postprocess), false predicts the frames as they are

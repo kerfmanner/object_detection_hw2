@@ -10,7 +10,7 @@ from ultralytics.engine.results import Boxes, Results
 from ultralytics.utils.patches import imread
 
 from src.data.classes import CLASS_NAMES
-from src.inference.detections import build_prediction_table
+from src.inference.detections import build_prediction_table, mirror_detections
 
 
 def convert_yolo_boxes(boxes: Boxes) -> np.ndarray:
@@ -70,7 +70,8 @@ def predict_yolo_frames(
 
     The time per image covers preprocessing, the forward pass, and NMS, with the GPU
     synchronized before and after; reading the file is not timed. `warmup_images` untimed
-    passes on the first frame come first. Options follow
+    passes on the first frame come first. With `hflip`, every frame is flipped horizontally
+    (timed) and its detections are mirrored back. Options follow
     https://docs.ultralytics.com/modes/predict/#inference-arguments
 
     Args:
@@ -78,7 +79,7 @@ def predict_yolo_frames(
         checkpoint_path: Path of the run's `best.pt`.
         images: Image table with `image_id` and absolute `file_path`.
         config: Resolved run configuration with `imgsz` and `[inference]` `conf`, `iou`,
-            `max_det`, `agnostic_nms`, and `warmup_images`.
+            `max_det`, `agnostic_nms`, `warmup_images`, and `hflip`.
 
     Returns:
         Predictions with `image_id`, 0-based `class_id`, `score`, and pixel `x`, `y`, `w`,
@@ -87,6 +88,7 @@ def predict_yolo_frames(
     detector = load_yolo_checkpoint(checkpoint_path)
     inference = config["inference"]
     is_cuda = torch.cuda.is_available()
+    is_flipped = inference["hflip"]
 
     def detect_boxes(frame: np.ndarray) -> Boxes:
         [result] = detector.predict(
@@ -113,10 +115,13 @@ def predict_yolo_frames(
         if is_cuda:
             torch.cuda.synchronize()
         started = time.perf_counter()
-        boxes = detect_boxes(frame)
+        boxes = detect_boxes(np.ascontiguousarray(frame[:, ::-1]) if is_flipped else frame)
         if is_cuda:
             torch.cuda.synchronize()
         seconds.append(time.perf_counter() - started)
-        frame_detections.append(convert_yolo_boxes(boxes))
+        detections = convert_yolo_boxes(boxes)
+        if is_flipped:
+            detections = mirror_detections(detections, frame.shape[1])
+        frame_detections.append(detections)
     predictions = build_prediction_table(images["image_id"], frame_detections)
     return predictions, 1000 * float(np.mean(seconds))
