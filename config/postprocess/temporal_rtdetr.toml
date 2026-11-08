@@ -1,0 +1,11 @@
+# I6 temporal rescoring on rtdetr-baseline: every detection's score moves halfway toward the highest score along its same-class track over consecutive frames, so objects confirmed in neighbouring frames outrank single-frame detections; chosen on val predictions (laptop grid of link IoU 0.3 / 0.5 / 0.7, weight 0.25 / 0.5 / 0.75, mean or max, min score 0 / 0.05: max above mean at every setting, weight 0.5 best, link IoU 0.3 and 0.5 within 0.0002 mAP)
+members = ["rtdetr-baseline"]  # reference model
+weights = [1.0]  # single member
+fusion = "none"  # no fusion; rescoring only
+
+[temporal]
+enabled = true  # rescore along tracks
+link_iou = 0.3  # best of the grid, 0.5 within 0.0002 mAP
+min_score = 0.0  # 0.05 changed mAP by at most 0.0001
+weight = 0.5  # 0.25 and 0.75 were lower
+statistic = "max"  # max above mean at every link IoU and weight

@@ -1,0 +1,5 @@
+# M2 with two families: WBF of rtdetr-baseline and the tuned Faster R-CNN faster_rcnn-giou_loss, which has the best AP50 and different errors (02_two_stage.ipynb section 7, 05_query_based.ipynb section 8); equal weights and IoU 0.65 were chosen on val predictions (laptop grid of weights 1:1, 2:1, 3:1 and IoU 0.5 to 0.7: equal weights best at every IoU, 0.6 to 0.7 within 0.0002 mAP; WBF above NMS fusion by 0.016 mAP at equal weights)
+members = ["rtdetr-baseline", "faster_rcnn-giou_loss"]  # reference query-based model and tuned two-stage model
+weights = [1.0, 1.0]  # equal; a larger RT-DETR weight lowered mAP at every IoU
+fusion = "wbf"  # Weighted Boxes Fusion (https://arxiv.org/abs/1910.13302)
+iou_thresh = 0.65  # middle of the plateau 0.6 to 0.7 of the grid

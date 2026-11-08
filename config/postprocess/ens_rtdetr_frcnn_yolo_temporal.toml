@@ -1,0 +1,12 @@
+# M2 plus I6: the three-family WBF of ens_rtdetr_frcnn_yolo followed by temporal rescoring along tracks, to test whether the gain of rescoring on single models (+0.0067 mAP on rtdetr-baseline, +0.0045 on rtdetr-lr_scaled_repeat-s7, +0.0068 on faster_rcnn-giou_loss, +0.0053 on yolo-baseline) adds to the fusion; weight and link IoU chosen on the fused val predictions (laptop grid of link IoU 0.3 / 0.5, weight 0.25 / 0.5 / 0.75, mean or max: max at weight 0.5 best, link IoU 0.3 and 0.5 within 0.0001 mAP)
+members = ["rtdetr-baseline", "faster_rcnn-giou_loss", "yolo-baseline"]  # as ens_rtdetr_frcnn_yolo
+weights = [1.0, 1.0, 1.0]  # as ens_rtdetr_frcnn_yolo
+fusion = "wbf"  # as ens_rtdetr_frcnn_yolo
+iou_thresh = 0.65  # as ens_rtdetr_frcnn_yolo
+
+[temporal]
+enabled = true  # rescore the fused predictions along tracks
+link_iou = 0.5  # 0.3 within 0.0001 mAP
+min_score = 0.0  # as temporal_rtdetr
+weight = 0.5  # 0.25 and 0.75 lower
+statistic = "max"  # max above mean at every link IoU and weight

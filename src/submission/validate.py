@@ -62,6 +62,26 @@ def parse_submission(csv_path: Path) -> tuple[pl.DataFrame, pl.DataFrame]:
     return rows, boxes
 
 
+def read_submission_predictions(csv_path: Path, test_images: pl.DataFrame) -> pl.DataFrame:
+    """Validate a submission CSV and read its boxes back as a prediction table.
+
+    Args:
+        csv_path: Path of a submission CSV, e.g. a run's `predictions.csv`.
+        test_images: Table with string `image_id`, `width`, and `height` of every test frame.
+
+    Returns:
+        One row per box with `image_id`, 0-based int64 `class_id`, `score`, and pixel `x`,
+        `y`, `w`, `h` (top-left corner) as float64.
+    """
+    validate_submission(csv_path, test_images)
+    _, boxes = parse_submission(csv_path)
+    return boxes.select(
+        "image_id",
+        pl.col("class_id").cast(pl.Int64),
+        pl.col("score", "x", "y", "w", "h").cast(pl.Float64),
+    )
+
+
 def validate_submission(csv_path: Path, test_images: pl.DataFrame) -> int:
     """Check a submission CSV against the competition format and the test frames.
 

@@ -1,0 +1,5 @@
+# M2 with three families: WBF of rtdetr-baseline, faster_rcnn-giou_loss, and yolo-baseline, the three detectors with different assignment schemes and the best small-object recall among the CNNs for YOLO (04_anchor_free.ipynb section 7); equal weights and IoU 0.65 were chosen on val predictions (laptop grid of four weightings and IoU 0.55 to 0.65: equal weights best at every IoU)
+members = ["rtdetr-baseline", "faster_rcnn-giou_loss", "yolo-baseline"]  # query-based, two-stage, and anchor-free models
+weights = [1.0, 1.0, 1.0]  # equal; weightings favouring RT-DETR (2:1:1, 3:2:1, 2:1:0.5) lowered mAP
+fusion = "wbf"  # Weighted Boxes Fusion (https://arxiv.org/abs/1910.13302)
+iou_thresh = 0.65  # best of 0.55, 0.6, 0.65 at equal weights

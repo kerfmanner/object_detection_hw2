@@ -1,0 +1,5 @@
+# M2 with every completed RT-DETR run: WBF of the four RT-DETR runs (baseline, lr_scaled, lr_scaled_repeat-s7, denoising_groups; seeds 42 and 7), faster_rcnn-giou_loss, and yolo-baseline, to test whether more RT-DETR members add to the three-family fusion; weights 0.5 per RT-DETR run (2 for the family against 1 each for the CNNs) and IoU 0.7 chosen on val predictions (laptop grid of 6 settings: equal weights 0.3588 to 0.3593 mAP, half weights 0.3641 at IoU 0.65 and 0.3645 at 0.7; the four RT-DETR runs alone 0.3297)
+members = ["rtdetr-baseline", "rtdetr-lr_scaled", "rtdetr-lr_scaled_repeat-s7", "rtdetr-denoising_groups", "faster_rcnn-giou_loss", "yolo-baseline"]  # every RT-DETR run with a results.csv row and the two other families
+weights = [0.5, 0.5, 0.5, 0.5, 1.0, 1.0]  # the RT-DETR family together weighs twice one CNN; equal weights let four similar members outvote the CNNs
+fusion = "wbf"  # Weighted Boxes Fusion (https://arxiv.org/abs/1910.13302)
+iou_thresh = 0.7  # 0.65 within 0.0004 mAP

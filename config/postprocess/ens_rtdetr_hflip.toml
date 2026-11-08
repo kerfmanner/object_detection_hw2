@@ -1,0 +1,5 @@
+# I2 horizontal-flip TTA on rtdetr-baseline: fuses its predictions on the original and on the flipped frames (rtdetr-infer_hflip) with WBF at the reference defaults (equal weights, IoU 0.55), so that boxes found in both views gain score and averaged corners; untuned, since the flipped predictions do not exist before this queue
+members = ["rtdetr-baseline", "rtdetr-infer_hflip"]  # the same checkpoint on original and flipped frames
+weights = [1.0, 1.0]  # equal weights: two views of one model
+fusion = "wbf"  # Weighted Boxes Fusion (https://arxiv.org/abs/1910.13302)
+iou_thresh = 0.55  # reference implementation default

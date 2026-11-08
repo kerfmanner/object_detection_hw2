@@ -1,0 +1,14 @@
+# Post-processing baseline: the saved predictions of the reference model rtdetr-baseline, unchanged (no fusion, no temporal rescoring), so that it reproduces the reference row
+members = ["rtdetr-baseline"]  # experiments whose saved predictions are combined, by name; each must have exactly one row in experiments/results.csv, whose run_dir holds val_predictions.parquet and predictions.csv
+weights = [1.0]  # positive weight of each member, in the order of members; multiplies its scores in the fusion
+fusion = "none"  # none (exactly one member, predictions unchanged), wbf (Weighted Boxes Fusion, https://arxiv.org/abs/1910.13302), or nms (concatenation and per-class NMS)
+iou_thresh = 0.55  # IoU threshold of the fusion, in [0, 1]: wbf adds a box to a cluster above it, nms removes boxes above it; 0.55 is the default of the WBF reference implementation (https://github.com/ZFTurbo/Weighted-Boxes-Fusion)
+seed = 42  # not used by the deterministic post-processing; the results.csv seed column is the members' seed when they share one
+
+[temporal]
+# Rescoring along same-class tracks linked over consecutive frames (src/inference/temporal.py), after the fusion
+enabled = false  # true rescores the fused predictions, false keeps their scores
+link_iou = 0.5  # minimum IoU of a one-to-one link between detections of consecutive frames, in [0, 1]
+min_score = 0.0  # detections below this score are neither linked nor rescored, in [0, 1]
+weight = 0.5  # share of the track score in the new score, in [0, 1]
+statistic = "mean"  # track score: mean (Seq-NMS average, https://arxiv.org/abs/1602.08465) or max of the scores along the track
