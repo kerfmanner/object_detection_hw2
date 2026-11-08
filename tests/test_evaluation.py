@@ -11,6 +11,7 @@ from src.data.classes import CLASS_NAMES
 from src.evaluation.coco_metrics import (
     build_coco_ground_truth,
     evaluate_detections,
+    evaluate_frame_groups,
     validate_predictions,
 )
 
@@ -200,3 +201,14 @@ def test_more_than_500_predictions_per_frame_are_rejected() -> None:
     with pytest.raises(ValueError, match="more than 500"):
         validate_predictions(predictions, tables.images)
     validate_predictions(predictions.head(500), tables.images)
+
+
+def test_frame_groups_are_evaluated_separately() -> None:
+    tables = build_tables(MIXED_OBJECTS, frame_sizes=((1920, 1080), (3840, 2160)))
+    predictions = to_predictions(tables.objects.filter(pl.col("image_id") == 1))
+    groups = pl.DataFrame({"image_id": [1, 2], "group": ["first", "second"]})
+    metrics = evaluate_frame_groups(tables, "val", predictions, groups)
+    assert metrics.select("group", "frames", "objects", "map").rows() == [
+        ("first", 1, 3, 1.0),
+        ("second", 1, 2, 0.0),
+    ]

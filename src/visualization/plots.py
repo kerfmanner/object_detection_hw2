@@ -51,16 +51,21 @@ def plot_class_histograms(
 
 
 def plot_training_history(
-    histories: pl.DataFrame, metrics: dict[str, str], title: str, xlabel: str = "Epoch"
+    histories: pl.DataFrame,
+    metrics: dict[str, str],
+    title: str,
+    x: str = "epoch",
+    xlabel: str = "Epoch",
 ) -> Figure:
     """Plot per-epoch metrics of several runs, one panel per metric and one line per run.
 
     Args:
-        histories: Long table with `experiment`, `epoch`, and one column per metric, e.g.
-            from `load_run_histories`.
+        histories: Long table with `experiment`, the `x` column, and one column per metric,
+            e.g. from `load_run_histories`.
         metrics: Mapping from metric column to its axis label, in panel order.
         title: Figure title.
-        xlabel: Label of the shared x axis.
+        x: Column of the shared x axis, e.g. `epoch` or cumulative training hours.
+        xlabel: Label of the shared x axis, with units.
 
     Returns:
         Figure with one axes per metric in one row.
@@ -69,8 +74,8 @@ def plot_training_history(
     experiments = histories["experiment"].unique(maintain_order=True).to_list()
     for ax, (column, label) in zip(axes[0], metrics.items(), strict=True):
         for experiment in experiments:
-            run = histories.filter(pl.col("experiment") == experiment).sort("epoch")
-            ax.plot(run["epoch"], run[column], marker="o", markersize=4, label=experiment)
+            run = histories.filter(pl.col("experiment") == experiment).sort(x)
+            ax.plot(run[x], run[column], marker="o", markersize=4, label=experiment)
         ax.set(xlabel=xlabel, ylabel=label)
     axes[0, 0].legend(fontsize=8)
     fig.suptitle(title)

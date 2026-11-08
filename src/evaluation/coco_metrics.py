@@ -224,3 +224,45 @@ def evaluate_detections(tables: AnnotationTables, split: str, predictions: pl.Da
             compute_average_precision(narrow, None, "small", None) if narrow else None
         ),
     }
+
+
+def evaluate_frame_groups(
+    tables: AnnotationTables, split: str, predictions: pl.DataFrame, frame_groups: pl.DataFrame
+) -> pl.DataFrame:
+    """Compute COCO metrics separately on groups of frames of a split, e.g. by density.
+
+    Args:
+        tables: Annotation tables with all frames of `split`.
+        split: Split name, e.g. `val`.
+        predictions: Predictions as accepted by `evaluate_detections`.
+        frame_groups: Table with `image_id` and `group` (string) for the frames to evaluate.
+
+    Returns:
+        One row per group in order of first appearance with `group`, `frames`, `objects`,
+        `map`, `map50`, `ap_small`, `ap_medium`, and `ap_large` (None without ground truth).
+    """
+    rows = []
+    for (group,), members in frame_groups.partition_by("group", as_dict=True).items():
+        ids = members["image_id"].implode()
+        images = tables.images.filter((pl.col("split") != split) | pl.col("image_id").is_in(ids))
+        metrics = evaluate_detections(
+            AnnotationTables(images, tables.objects, tables.ignored),
+            split,
+            predictions.filter(pl.col("image_id").is_in(ids)),
+        )
+        rows.append(
+            {"group": group}
+            | {
+                key: metrics[key]
+                for key in (
+                    "frames",
+                    "objects",
+                    "map",
+                    "map50",
+                    "ap_small",
+                    "ap_medium",
+                    "ap_large",
+                )
+            }
+        )
+    return pl.DataFrame(rows)

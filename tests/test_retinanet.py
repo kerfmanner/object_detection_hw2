@@ -1,8 +1,11 @@
 import copy
 import math
+from pathlib import Path
 
+import polars as pl
 import pytest
 import torch
+from torchvision.io import write_jpeg
 from torchvision.models.detection import (
     RetinaNet_ResNet50_FPN_V2_Weights,
     retinanet_resnet50_fpn_v2,
@@ -10,6 +13,7 @@ from torchvision.models.detection import (
 from torchvision.models.detection.retinanet import RetinaNet, RetinaNetClassificationHead
 from torchvision.ops import sigmoid_focal_loss
 
+from src.inference.torchvision_detectors import tabulate_anchor_matches
 from src.models.retinanet import FocalLossClassificationHead, build_retinanet, set_focal_loss
 from src.training.experiment import load_experiment_config
 from tests.test_smoke import RETINANET_BASELINE
@@ -155,3 +159,27 @@ def test_focal_loss_trains_the_detector(baseline_config: dict) -> None:
     assert set(losses) == {"classification", "bbox_regression"}
     losses["classification"].backward()
     assert model.head.classification_head.cls_logits.weight.grad is not None
+
+
+def test_anchor_matches_follow_the_retinanet_matcher(baseline_config: dict, tmp_path: Path) -> None:
+    detector = build_retinanet(baseline_config | TINY_INPUT).eval()
+    paths = [tmp_path / "a.jpg", tmp_path / "b.jpg"]
+    for path in paths:
+        write_jpeg(torch.zeros((3, 48, 64), dtype=torch.uint8), str(path))
+    images = pl.DataFrame({"image_id": [1, 2], "file_path": [str(path) for path in paths]})
+    objects = pl.DataFrame(
+        {
+            "image_id": [1, 1],
+            "x": [4.0, 30.0],
+            "y": [4.0, 10.0],
+            "w": [20.0, 30.0],
+            "h": [12.0, 30.0],
+        }
+    )
+    frames, matched = tabulate_anchor_matches(detector, images, objects, torch.device("cpu"))
+    assert frames["image_id"].to_list() == [1, 2] and frames["objects"].to_list() == [2, 0]
+    totals = frames.select(pl.col("positives") + pl.col("negatives") + pl.col("ignored"))
+    assert totals.to_series().to_list() == frames["anchors"].to_list()
+    assert frames.row(1, named=True)["positives"] == 0
+    assert matched.height == 2 and (matched["positive_anchors"] >= 1).all()
+    assert matched["positive_anchors"].sum() == frames["positives"][0]

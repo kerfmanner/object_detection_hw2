@@ -52,3 +52,13 @@ def test_grouped_bars_draw_one_bar_per_row() -> None:
     assert heights == [0.2, 0.3, 0.9]
     assert sorted(text.get_text() for text in fig.axes[0].texts) == ["0.20", "0.30", "0.90"]
     plt.close(fig)
+
+
+def test_training_history_uses_the_given_x_column() -> None:
+    histories = pl.DataFrame(
+        {"experiment": ["a", "a"], "epoch": [1, 2], "hours": [0.5, 1.0], "m": [0.1, 0.2]}
+    )
+    fig = plot_training_history(histories, {"m": "mAP"}, "History", x="hours", xlabel="Hours")
+    assert np.asarray(fig.axes[0].lines[0].get_xdata()).tolist() == [0.5, 1.0]
+    assert fig.axes[0].get_xlabel() == "Hours"
+    plt.close(fig)

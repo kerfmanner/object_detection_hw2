@@ -318,8 +318,8 @@ def select_error_examples(
         )
         .join(clips, on="image_id", maintain_order="left")
         .sort("image_id", "class_id", *BOX_COLUMNS)
-        .sample(fraction=1.0, shuffle=True, seed=seed)
     )
+    missed = missed[np.random.default_rng(seed).permutation(missed.height)]
     misses = (
         missed.unique(subset="clip", keep="first", maintain_order=True)
         .head(per_category)

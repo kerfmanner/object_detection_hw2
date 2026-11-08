@@ -15,7 +15,7 @@ from src.data.annotations import AnnotationTables
 from src.data.classes import CLASS_NAMES
 from src.evaluation.coco_metrics import PREDICTION_COLUMNS, validate_predictions
 from src.inference.yolo import convert_yolo_boxes, load_yolo_checkpoint, predict_yolo_frames
-from src.models.yolo import build_yolo, set_assigner_topk
+from src.models.yolo import build_yolo, count_assignment_candidates, set_assigner_topk
 from src.training.experiment import load_experiment_config
 from src.training.yolo import check_training_budget
 from tests.conftest import PROJECT_ROOT
@@ -157,3 +157,14 @@ def test_assigner_topk_must_be_a_positive_integer(untrained_detector: DetectionM
     for topk in (0, -1):
         with pytest.raises(ValueError, match="TAL topk must be an integer"):
             set_assigner_topk(untrained_detector, topk)
+
+
+def test_assignment_candidates_count_grid_points_strictly_inside_enlarged_boxes() -> None:
+    boxes = np.array(
+        [[0.0, 0.0, 32.0, 32.0], [16.0, 16.0, 48.0, 32.0], [100.0, 100.0, 104.0, 104.0]]
+    )
+    candidates, shared = count_assignment_candidates(boxes, [8, 16], min_side=16)
+    assert candidates.tolist() == [16 + 4, 8 + 2, 4 + 1]
+    assert shared.tolist() == [4 + 1, 4 + 1, 0]
+    none, _ = count_assignment_candidates(np.zeros((0, 4)), [8], min_side=16)
+    assert none.shape == (0,)

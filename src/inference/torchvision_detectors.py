@@ -5,11 +5,15 @@ import numpy as np
 import polars as pl
 import torch
 from torchvision.io import ImageReadMode, decode_image
+from torchvision.models.detection._utils import Matcher
 from torchvision.models.detection.faster_rcnn import FasterRCNN
+from torchvision.models.detection.retinanet import RetinaNet
 from torchvision.models.detection.transform import resize_boxes
+from torchvision.ops import box_iou
 from tqdm.auto import tqdm
 
 from src.data.annotations import BOX_COLUMNS
+from src.data.boxes import convert_xywh_to_xyxy
 from src.inference.detections import build_prediction_table
 from src.models.torchvision_labels import (
     TORCHVISION_FAMILIES,
@@ -212,3 +216,66 @@ def tabulate_rpn_proposals(
             )
         )
     return pl.concat(frames)
+
+
+def tabulate_anchor_matches(
+    detector: RetinaNet, images: pl.DataFrame, objects: pl.DataFrame, device: torch.device
+) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """Assign the anchors of every frame to its GT boxes as RetinaNet training does.
+
+    Each frame goes through the detector's resize transform, backbone, and anchor generator,
+    and the anchors are matched to the resized GT boxes with the detector's
+    `proposal_matcher`, as in torchvision's `RetinaNet.compute_loss`: IoU at least the
+    foreground threshold is positive, below the background threshold negative, in between
+    ignored, and every GT box also keeps its best anchors
+    (https://github.com/pytorch/vision/blob/main/torchvision/models/detection/retinanet.py).
+    The weights do not affect the result.
+
+    Args:
+        detector: RetinaNet on `device` in eval mode.
+        images: Image table with `image_id` and absolute `file_path`.
+        objects: GT objects of these frames with `image_id` and pixel box columns.
+        device: Device of the detector.
+
+    Returns:
+        A frame table with `image_id`, `objects`, `anchors`, `positives`, `negatives`, and
+        `ignored`, and the objects with `positive_anchors`, the anchors matched to each.
+    """
+    frame_objects = objects.partition_by("image_id", as_dict=True)
+    frame_rows, object_parts = [], []
+    rows = images.select("image_id", "file_path").iter_rows()
+    with torch.inference_mode():
+        for image_id, file_path in tqdm(rows, total=images.height, desc="Anchors", unit="frame"):
+            boxes_table = frame_objects.get((image_id,), objects.clear())
+            boxes = convert_xywh_to_xyxy(
+                boxes_table.select(BOX_COLUMNS).to_numpy().astype(np.float32).reshape(-1, 4)
+            )
+            target = {
+                "boxes": torch.from_numpy(boxes).to(device),
+                "labels": torch.ones(len(boxes), dtype=torch.int64, device=device),
+            }
+            frame = decode_image(file_path, mode=ImageReadMode.RGB)
+            image_list, resized = detector.transform(
+                convert_frames_to_inputs([frame], device), [target]
+            )
+            features = list(detector.backbone(image_list.tensors).values())
+            [anchors] = detector.anchor_generator(image_list, features)
+            matched = torch.full((len(anchors),), Matcher.BELOW_LOW_THRESHOLD, device=device)
+            if len(boxes):
+                matched = detector.proposal_matcher(box_iou(resized[0]["boxes"], anchors))
+            positives = matched[matched >= 0]
+            frame_rows.append(
+                {
+                    "image_id": image_id,
+                    "objects": len(boxes),
+                    "anchors": len(anchors),
+                    "positives": len(positives),
+                    "negatives": int((matched == Matcher.BELOW_LOW_THRESHOLD).sum()),
+                    "ignored": int((matched == Matcher.BETWEEN_THRESHOLDS).sum()),
+                }
+            )
+            counts = torch.bincount(positives, minlength=len(boxes)).cpu().numpy()
+            object_parts.append(
+                boxes_table.with_columns(pl.Series("positive_anchors", counts, dtype=pl.Int64))
+            )
+    return pl.DataFrame(frame_rows), pl.concat(object_parts)

@@ -1,5 +1,7 @@
 import re
 
+import numpy as np
+import polars as pl
 import torch
 from torchvision.ops import box_convert
 from transformers import RTDetrV2ForObjectDetection
@@ -352,4 +354,47 @@ def build_rtdetr(config: dict) -> RTDetrDetector:
         config["max_size"],
         inference["score_thresh"],
         inference["detections_per_img"],
+    )
+
+
+def predict_query_boxes(model: RTDetrDetector, frame: torch.Tensor) -> pl.DataFrame:
+    """Predict the box and the best class of every object query for one frame.
+
+    Inference ranks (query, class) pairs; this keeps one row per query instead, with its
+    highest-scoring class, so that the queries can be drawn as the decoder outputs them.
+
+    Args:
+        model: Detector from `build_rtdetr` in eval mode.
+        frame: float tensor of shape (3, height, width) with values in [0, 1], on the
+            model's device.
+
+    Returns:
+        One row per query in descending score order with `rank` (0 for the highest score),
+        0-based `class_id`, sigmoid `score`, and pixel `x`, `y`, `w`, `h` (top-left corner)
+        in the original frame, clipped to it.
+    """
+    height, width = frame.shape[-2], frame.shape[-1]
+    with torch.inference_mode():
+        pixel_values, [resized_size] = resize_and_pad_frames(
+            [frame], model.min_size, model.max_size
+        )
+        outputs = model.detector(pixel_values=pixel_values)
+    scores, labels = outputs.logits[0].float().sigmoid().max(dim=-1)
+    padded_size = (pixel_values.shape[-2], pixel_values.shape[-1])
+    scales = compute_canvas_scales((height, width), resized_size, padded_size)
+    boxes = box_convert(outputs.pred_boxes[0].float(), "cxcywh", "xyxy") / scales.to(frame.device)
+    boxes[:, 0::2] = boxes[:, 0::2].clamp(0, width)
+    boxes[:, 1::2] = boxes[:, 1::2].clamp(0, height)
+    order = scores.argsort(descending=True)
+    xyxy = boxes[order].cpu().double().numpy()
+    return pl.DataFrame(
+        {
+            "rank": np.arange(len(order)),
+            "class_id": labels[order].cpu().numpy().astype(np.int64),
+            "score": scores[order].cpu().double().numpy(),
+            "x": xyxy[:, 0],
+            "y": xyxy[:, 1],
+            "w": xyxy[:, 2] - xyxy[:, 0],
+            "h": xyxy[:, 3] - xyxy[:, 1],
+        }
     )

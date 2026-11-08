@@ -26,6 +26,7 @@ from src.models.rtdetr import (
     convert_targets_to_rtdetr,
     freeze_backbone_stages,
     group_rtdetr_losses,
+    predict_query_boxes,
     resize_and_pad_frames,
 )
 from src.training.experiment import init_wandb, load_experiment_config
@@ -321,6 +322,17 @@ def test_experiment_configs_change_one_factor_of_the_baseline(
     check_training_budget(config)
 
 
+def test_lr_scaled_repeat_differs_from_lr_scaled_only_in_the_seed() -> None:
+    scaled = load_experiment_config(RTDETR_DIR / "lr_scaled.toml")
+    repeat = load_experiment_config(RTDETR_DIR / "lr_scaled_repeat.toml")
+    assert repeat["run"]["experiment"] == "rtdetr-lr_scaled_repeat-s7"
+    assert repeat["seed"] == 7 and scaled["seed"] == 42
+    assert {k: v for k, v in repeat.items() if k not in ("run", "seed")} == {
+        k: v for k, v in scaled.items() if k not in ("run", "seed")
+    }
+    check_training_budget(repeat)
+
+
 def test_scaled_learning_rates_keep_the_backbone_ratio(
     baseline_config: dict, baseline_model: RTDetrDetector
 ) -> None:
@@ -445,3 +457,17 @@ def test_full_run_writes_checkpoints_and_the_training_section(
     head = "detector.model.enc_score_head.weight"
     assert not torch.equal(last[MODEL_STATE_KEY][head], fresh_state[head])
     fresh.load_state_dict(best[MODEL_STATE_KEY])
+
+
+def test_query_boxes_keep_one_row_per_query_in_score_order(tiny_model: RTDetrDetector) -> None:
+    tiny_model.eval()
+    frame = torch.rand(3, 60, 100)
+    queries = predict_query_boxes(tiny_model, frame)
+    assert queries.height == tiny_model.detector.config.num_queries
+    assert queries["rank"].to_list() == list(range(queries.height))
+    assert queries["score"].is_sorted(descending=True)
+    assert queries["class_id"].is_between(0, len(CLASS_NAMES) - 1).all()
+    assert (queries["x"] >= 0).all() and (queries["x"] + queries["w"] <= 100 + 1e-6).all()
+    detections = tiny_model([frame])[0]
+    best = queries.row(0, named=True)
+    assert best["score"] == pytest.approx(detections["scores"][0].item(), abs=1e-6)
