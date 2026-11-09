@@ -1,0 +1,3 @@
+# Inference only, on yolo-baseline: imgsz 1280 instead of the training size 1824, as an ensemble member at a second scale; yolo-imgsz_1280, trained at 1280, added +0.0063 mAP to the WBF of rtdetr-baseline, faster_rcnn-giou_loss, and yolo-baseline, and this run tells whether the scale alone gives that gain
+source = "yolo-baseline"  # trained run whose best.pt predicts
+imgsz = 1280  # baseline 1824; longer frame side at inference in px

@@ -1,0 +1,10 @@
+# Seed repeat of recipe_step2 (seed 7 instead of 42): the final model's gain over the baseline counts as established only if it holds with another seed, since RT-DETR seeds differ by 0.0094 mAP (lr_scaled against lr_scaled_repeat-s7)
+seed = 7  # baseline 42
+train_frames = "train_final"  # as recipe_step2
+epochs = 3  # as recipe_step2
+
+[augment]
+hflip = true  # as recipe_step2
+photometric = true  # as recipe_step2
+train_scales = [832, 896, 960, 1024, 1024, 1024, 1088, 1152, 1216]  # as recipe_step2
+clean_epochs = 1  # as recipe_step2

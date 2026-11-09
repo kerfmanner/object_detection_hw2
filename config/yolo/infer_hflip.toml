@@ -1,0 +1,5 @@
+# Inference only, on yolo-baseline, which trained with Ultralytics' default horizontal flips (fliplr 0.5): predicts flipped frames and mirrors the boxes back, the flip member of a flip TTA fusion; rtdetr-baseline, trained without flips, predicts about 2.2 input px to the right on flipped frames
+source = "yolo-baseline"  # trained run whose best.pt predicts
+
+[inference]
+hflip = true  # baseline false

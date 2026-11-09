@@ -1,0 +1,4 @@
+# Inference only, on rtdetr-augment_recipe, which trained at shorter sides of 832 to 1216 px: frames resized to 1152 px instead of 1024 px, the best inference size for rtdetr-baseline (infer_size1152, +0.0045 mAP, AP_small 0.1475 against 0.1334)
+source = "rtdetr-augment_recipe"  # trained run whose best.pt predicts
+min_size = 1152  # baseline 1024; shorter frame side at inference in px
+max_size = 2052  # baseline 1824, scaled by the same factor so that 16:9 frames reach min_size

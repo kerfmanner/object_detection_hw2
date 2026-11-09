@@ -1,0 +1,9 @@
+# Final RT-DETR (M1): the two data settings that raised val mAP, combined: the augmentation recipe of augment_recipe (+0.0164 mAP, above the 0.0094 seed noise) on train frames at step 2 (step2, +0.0069), the step AGENTS.md sets for final models; lr_scaled is left out because its gain did not repeat with seed 7
+train_frames = "train_final"  # baseline train_tuning; step 2, 12,240 frames instead of 4,919
+epochs = 3  # baseline 7; every run so far peaks within its first 2,500 to 3,100 optimizer steps (augment_recipe at epoch 2 of 7, step2 at epoch 1 of 3), and 3 epochs at step 2 are about 9,200 steps; about 2.8 GPU hours from augment_recipe's 0.39 h per step-5 epoch times 2.5
+
+[augment]
+hflip = true  # as augment_recipe
+photometric = true  # as augment_recipe
+train_scales = [832, 896, 960, 1024, 1024, 1024, 1088, 1152, 1216]  # as augment_recipe
+clean_epochs = 1  # as augment_recipe: the last epoch, here 3 of 3, trains on unmodified frames at 1024 px
