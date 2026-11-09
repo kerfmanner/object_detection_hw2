@@ -1,0 +1,13 @@
+# ens_recipe_frcnn_yolo_smooth plus yolo-imgsz_1280 as a fourth member, a YOLO trained at a second input scale, the extra member that added most to the three-family WBF (+0.0063 mAP, against +0.0023 to +0.0042 for retinanet-baseline, faster_rcnn-lr_cosine, and yolo-tal_topk); on val predictions 0.3755 mAP against 0.3724, both val folds higher (laptop grid)
+members = ["rtdetr-augment_recipe", "faster_rcnn-giou_loss", "yolo-baseline", "yolo-imgsz_1280"]  # fourth member added
+weights = [1.0, 1.0, 1.0, 1.0]  # equal weights, as the three members
+fusion = "wbf"  # as ens_recipe_frcnn_yolo_smooth
+iou_thresh = 0.65  # as ens_recipe_frcnn_yolo_smooth
+
+[temporal]
+enabled = true  # as ens_recipe_frcnn_yolo_smooth
+link_iou = 0.5  # as ens_recipe_frcnn_yolo_smooth
+min_score = 0.0  # as ens_recipe_frcnn_yolo_smooth
+weight = 0.5  # as ens_recipe_frcnn_yolo_smooth
+statistic = "max"  # as ens_recipe_frcnn_yolo_smooth
+should_smooth_boxes = true  # as ens_recipe_frcnn_yolo_smooth

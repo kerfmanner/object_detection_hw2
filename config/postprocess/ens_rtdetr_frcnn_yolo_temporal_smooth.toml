@@ -1,0 +1,13 @@
+# Box smoothing on top of ens_rtdetr_frcnn_yolo_temporal, to test whether its gain on rtdetr-baseline (temporal_smooth_rtdetr) adds to the three-family fusion; on val predictions +0.0032 mAP (laptop grid)
+members = ["rtdetr-baseline", "faster_rcnn-giou_loss", "yolo-baseline"]  # as ens_rtdetr_frcnn_yolo_temporal
+weights = [1.0, 1.0, 1.0]  # as ens_rtdetr_frcnn_yolo_temporal
+fusion = "wbf"  # as ens_rtdetr_frcnn_yolo_temporal
+iou_thresh = 0.65  # as ens_rtdetr_frcnn_yolo_temporal
+
+[temporal]
+enabled = true  # as ens_rtdetr_frcnn_yolo_temporal
+link_iou = 0.5  # as ens_rtdetr_frcnn_yolo_temporal
+min_score = 0.0  # as ens_rtdetr_frcnn_yolo_temporal
+weight = 0.5  # as ens_rtdetr_frcnn_yolo_temporal
+statistic = "max"  # as ens_rtdetr_frcnn_yolo_temporal
+should_smooth_boxes = true  # baseline false

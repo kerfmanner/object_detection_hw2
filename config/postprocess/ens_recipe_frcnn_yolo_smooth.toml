@@ -1,0 +1,13 @@
+# ens_rtdetr_frcnn_yolo_temporal_smooth with rtdetr-augment_recipe (+0.0164 mAP over rtdetr-baseline) as the RT-DETR member, to test whether the better single model carries into the fusion; on val predictions 0.3724 mAP against 0.3649, both val folds higher; weights 2 / 1 / 1 gave +0.0015 with the folds moving in opposite directions, so equal weights stay (laptop grid)
+members = ["rtdetr-augment_recipe", "faster_rcnn-giou_loss", "yolo-baseline"]  # RT-DETR member changed
+weights = [1.0, 1.0, 1.0]  # as ens_rtdetr_frcnn_yolo_temporal_smooth
+fusion = "wbf"  # as ens_rtdetr_frcnn_yolo_temporal_smooth
+iou_thresh = 0.65  # as ens_rtdetr_frcnn_yolo_temporal_smooth
+
+[temporal]
+enabled = true  # as ens_rtdetr_frcnn_yolo_temporal_smooth
+link_iou = 0.5  # as ens_rtdetr_frcnn_yolo_temporal_smooth
+min_score = 0.0  # as ens_rtdetr_frcnn_yolo_temporal_smooth
+weight = 0.5  # as ens_rtdetr_frcnn_yolo_temporal_smooth
+statistic = "max"  # as ens_rtdetr_frcnn_yolo_temporal_smooth
+should_smooth_boxes = true  # as ens_rtdetr_frcnn_yolo_temporal_smooth

@@ -139,3 +139,48 @@ def rescore_along_tracks(
     return rescored.select(PREDICTION_COLUMNS).sort(
         "image_id", "score", descending=[False, True], maintain_order=True
     )
+
+
+def smooth_boxes_along_tracks(
+    predictions: pl.DataFrame, images: pl.DataFrame, link_iou: float, min_score: float
+) -> pl.DataFrame:
+    """Average every box linked in both the previous and the next frame with those two boxes.
+
+    The box of a detection in the middle of its track from `assign_tracks` becomes
+    `(previous + 2 * current + next) / 4`, coordinate by coordinate, a binomial filter that
+    reduces frame-to-frame jitter and leaves constant motion unchanged. Detections at track
+    ends and without a track keep their boxes; scores are unchanged.
+
+    Args:
+        predictions: Table with `PREDICTION_COLUMNS` on consecutive frames of clips.
+        images: Image table with `image_id`, `clip`, and `frame_id` of the predicted frames.
+        link_iou: Minimum IoU of a link between consecutive frames.
+        min_score: Detections below this score are neither linked nor smoothed.
+
+    Returns:
+        The same detections with `PREDICTION_COLUMNS` and the smoothed boxes, sorted by
+        `image_id` and descending score.
+    """
+    tracked = assign_tracks(predictions, images, link_iou, min_score).sort("track_id", "frame_id")
+    is_inside_track = (
+        pl.col("track_id").is_not_null()
+        & pl.col("frame_id").shift(1).over("track_id").is_not_null()
+        & pl.col("frame_id").shift(-1).over("track_id").is_not_null()
+    )
+    smoothed = tracked.with_columns(
+        pl.when(is_inside_track)
+        .then(
+            (
+                pl.col(column).shift(1).over("track_id")
+                + 2 * pl.col(column)
+                + pl.col(column).shift(-1).over("track_id")
+            )
+            / 4
+        )
+        .otherwise(pl.col(column))
+        .alias(column)
+        for column in BOX_COLUMNS
+    )
+    return smoothed.select(PREDICTION_COLUMNS).sort(
+        "image_id", "score", descending=[False, True], maintain_order=True
+    )

@@ -29,7 +29,7 @@ from src.evaluation.coco_metrics import (
     evaluate_frame_groups,
 )
 from src.inference.fusion import fuse_predictions
-from src.inference.temporal import rescore_along_tracks
+from src.inference.temporal import rescore_along_tracks, smooth_boxes_along_tracks
 from src.predict import (
     RUNS_ROOT,
     TEST_PREDICTIONS_FILE,
@@ -55,7 +55,7 @@ SHARED_TRAINING_FIELDS = ("seed", "frame_step", "epochs", "effective_batch_size"
 def postprocess_predictions(
     members: list[pl.DataFrame], images: pl.DataFrame, config: dict
 ) -> pl.DataFrame:
-    """Fuse the predictions of the members, then optionally rescore them along tracks.
+    """Fuse the member predictions, then optionally rescore and smooth them along tracks.
 
     Args:
         members: Prediction tables with `PREDICTION_COLUMNS` of the members on `images`.
@@ -77,7 +77,7 @@ def postprocess_predictions(
     temporal = config["temporal"]
     if not temporal["enabled"]:
         return predictions
-    return rescore_along_tracks(
+    rescored = rescore_along_tracks(
         predictions,
         images,
         temporal["link_iou"],
@@ -85,6 +85,9 @@ def postprocess_predictions(
         temporal["weight"],
         temporal["statistic"],
     )
+    if not temporal["should_smooth_boxes"]:
+        return rescored
+    return smooth_boxes_along_tracks(rescored, images, temporal["link_iou"], temporal["min_score"])
 
 
 def evaluate_postprocess_settings(

@@ -1,0 +1,12 @@
+# Box smoothing on top of temporal_rtdetr: every box linked in both neighbouring frames becomes (previous + 2 * current + next) / 4 after the rescoring, against frame-to-frame jitter of the boxes; on val predictions +0.0025 mAP (+0.0041 AP75), both val folds +0.002, while filling one-frame gaps in tracks added only +0.0005 and was dropped (laptop grid)
+members = ["rtdetr-baseline"]  # as temporal_rtdetr
+weights = [1.0]  # as temporal_rtdetr
+fusion = "none"  # as temporal_rtdetr
+
+[temporal]
+enabled = true  # as temporal_rtdetr
+link_iou = 0.3  # as temporal_rtdetr
+min_score = 0.0  # as temporal_rtdetr
+weight = 0.5  # as temporal_rtdetr
+statistic = "max"  # as temporal_rtdetr
+should_smooth_boxes = true  # baseline false

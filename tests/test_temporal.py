@@ -8,6 +8,7 @@ from src.inference.temporal import (
     link_track_ids,
     match_greedily,
     rescore_along_tracks,
+    smooth_boxes_along_tracks,
 )
 from tests.test_fusion import build_predictions
 
@@ -75,6 +76,32 @@ def test_scores_move_toward_the_track_statistic_and_singletons_keep_theirs() -> 
     assert maximum.sort("image_id")["score"].to_list()[:3] == pytest.approx([0.9] * 3)
     unchanged = rescore_along_tracks(predictions, IMAGES, 0.5, 0.0, weight=0.0, statistic="mean")
     assert unchanged.sort("image_id").equals(predictions.sort("image_id"))
+
+
+def test_boxes_inside_tracks_are_smoothed_and_constant_motion_is_kept() -> None:
+    predictions = build_predictions(
+        [
+            (1, 0, 0.9, 10, 0, 10, 10),
+            (2, 0, 0.8, 13, 0, 10, 10),
+            (3, 0, 0.7, 14, 0, 12, 10),
+            (1, 1, 0.9, 0, 50, 10, 10),
+            (2, 1, 0.9, 2, 50, 10, 10),
+            (3, 1, 0.9, 4, 50, 10, 10),
+            (4, 0, 0.6, 14, 0, 12, 10),
+        ]
+    )
+    smoothed = smooth_boxes_along_tracks(predictions, IMAGES, link_iou=0.3, min_score=0.0)
+    assert smoothed.columns == list(PREDICTION_COLUMNS)
+    rows = {(row[0], row[1]): row[2:] for row in smoothed.rows()}
+    assert rows[(2, 0)] == pytest.approx((0.8, 12.5, 0.0, 10.5, 10.0))
+    assert rows[(2, 1)] == pytest.approx((0.9, 2.0, 50.0, 10.0, 10.0))
+    for key in ((1, 0), (3, 0), (4, 0), (1, 1), (3, 1)):
+        assert (
+            rows[key]
+            == predictions.filter(
+                (pl.col("image_id") == key[0]) & (pl.col("class_id") == key[1])
+            ).row(0)[2:]
+        )
 
 
 def test_invalid_rescoring_settings_and_unknown_frames_are_rejected() -> None:
