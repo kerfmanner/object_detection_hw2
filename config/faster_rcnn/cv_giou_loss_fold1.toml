@@ -1,0 +1,6 @@
+# Cross-validation fold 1 of the Faster R-CNN ensemble member giou_loss for its best epoch 2 (as trainval_giou_loss): trained on folds other than 1 (42 clips), validated on fold_1 (21 clips)
+clip_split = "fold_1"  # baseline main
+epochs = 2  # as trainval_giou_loss: the best epoch of giou_loss
+
+[roi_heads]
+box_loss = "giou"  # as giou_loss

@@ -643,3 +643,18 @@ def test_flipped_predictions_are_mirrored_back_to_the_original_frame(
     assert predictions.select("x", "y", "w", "h").row(0) == pytest.approx((40, 12, 16, 8))
     [flipped] = outputs.inputs[-1]
     assert flipped[:, 4:44, 58:62].min() > 0.8 and flipped[:, 4:44, 2:50].max() < 0.2
+
+
+@pytest.mark.parametrize("fold", [0, 1, 2])
+def test_fold_configs_train_the_final_recipe_on_the_other_folds(fold: int) -> None:
+    config = load_experiment_config(RTDETR_DIR / f"cv_recipe_step2_fold{fold}.toml")
+    final = load_experiment_config(RTDETR_DIR / "trainval_recipe_step2.toml")
+    member = tomllib.loads((RTDETR_DIR / "infer_recipe_step2_det500.toml").read_text())
+    assert config["run"]["experiment"] == f"rtdetr-cv_recipe_step2_fold{fold}"
+    assert (config["clip_split"], config["train_splits"]) == (f"fold_{fold}", ["train"])
+    assert config["inference"] == final["inference"] | member["inference"]
+    unchanged = ("run", "clip_split", "train_splits", "inference")
+    assert {k: v for k, v in config.items() if k not in unchanged} == {
+        k: v for k, v in final.items() if k not in unchanged
+    }
+    check_training_budget(config)

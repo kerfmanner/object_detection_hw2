@@ -23,6 +23,7 @@ from src.training.experiment import (
 BASELINE_TOML = """# Faster R-CNN baseline
 arch = "fasterrcnn_resnet50_fpn_v2"
 seed = 42
+clip_split = "main"
 lr = 0.01
 amp = true
 

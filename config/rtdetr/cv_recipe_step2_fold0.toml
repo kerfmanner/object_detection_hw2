@@ -1,0 +1,13 @@
+# Cross-validation fold 0 of the final RT-DETR recipe (trainval_recipe_step2 with 500 detections, as the ensemble member infer_recipe_step2_det500): trained on folds other than 0 (42 clips), validated on fold_0 (21 clips), to estimate its mAP over all 63 clips instead of 7
+clip_split = "fold_0"  # baseline main
+train_frames = "train_final"  # as recipe_step2
+epochs = 1  # as trainval_recipe_step2: the best epoch of recipe_step2 and its seed 7 repeat
+
+[augment]
+hflip = true  # as recipe_step2
+photometric = true  # as recipe_step2
+train_scales = [832, 896, 960, 1024, 1024, 1024, 1088, 1152, 1216]  # as recipe_step2
+clean_epochs = 0  # as trainval_recipe_step2
+
+[inference]
+detections_per_img = 500  # as infer_recipe_step2_det500

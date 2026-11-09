@@ -18,7 +18,12 @@ from torchvision.models.detection.retinanet import RetinaNet
 from torchvision.models.detection.transform import GeneralizedRCNNTransform
 from tqdm.auto import tqdm
 
-from src.data.annotations import AnnotationTables, load_annotations, load_split_clips
+from src.data.annotations import (
+    MAIN_CLIP_SPLIT,
+    AnnotationTables,
+    load_annotations,
+    load_clip_split,
+)
 from src.data.augment import build_train_transform, draw_input_sizes
 from src.data.dataset import VisDroneDataset, load_frame_steps, select_frames, select_smoke_frames
 from src.evaluate import DATA_CONFIG_PATH, METRICS_FILE
@@ -73,14 +78,17 @@ def check_training_budget(config: dict) -> None:
     schedule, and weight averaging of a full run.
 
     Args:
-        config: Resolved configuration with `train_frames`, `train_splits`, `epochs`,
-            `batch_size`, `grad_accum`, `lr`, and the `[augment]` and `[ema]` tables.
+        config: Resolved configuration with `train_frames`, `train_splits`, `clip_split`,
+            `epochs`, `batch_size`, `grad_accum`, `lr`, and the `[augment]` and `[ema]`
+            tables.
     """
     problems = []
     if config["train_frames"] not in TRAIN_FRAME_STEPS:
         problems.append(f"train_frames must be one of {TRAIN_FRAME_STEPS}")
     if config["train_splits"] not in TRAIN_SPLIT_CHOICES:
         problems.append(f"train_splits must be one of {TRAIN_SPLIT_CHOICES}")
+    if config["clip_split"] != MAIN_CLIP_SPLIT and "val" in config["train_splits"]:
+        problems.append(f"train_splits with val needs clip_split {MAIN_CLIP_SPLIT}")
     for key in ("epochs", "batch_size", "grad_accum"):
         if type(config[key]) is not int or config[key] < 1:
             problems.append(f"{key} must be an integer of at least 1")
@@ -769,11 +777,14 @@ def train_torchvision_detector(
         run_dir: Run directory, or None for a smoke run.
         wandb_run: W&B run for curves and sample frames.
     """
-    tables = load_annotations(data_root, load_split_clips(DATA_CONFIG_PATH))
     if run_dir is None:
-        run_torchvision_smoke(config, tables, wandb_run)
+        smoke_tables = load_annotations(
+            data_root, load_clip_split(DATA_CONFIG_PATH, MAIN_CLIP_SPLIT)
+        )
+        run_torchvision_smoke(config, smoke_tables, wandb_run)
         return
     check_training_budget(config)
+    tables = load_annotations(data_root, load_clip_split(DATA_CONFIG_PATH, config["clip_split"]))
     frame_steps = load_frame_steps(DATA_CONFIG_PATH)
     train_step, val_step = frame_steps[config["train_frames"]], frame_steps["val_monitoring"]
     augment = config["augment"]

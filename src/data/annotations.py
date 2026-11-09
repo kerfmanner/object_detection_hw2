@@ -3,7 +3,9 @@ import tomllib
 from pathlib import Path
 from typing import NamedTuple
 
+import numpy as np
 import polars as pl
+from sklearn.model_selection import GroupKFold
 
 from src.data.classes import CLASS_NAMES
 
@@ -11,6 +13,8 @@ BOX_COLUMNS = ("x", "y", "w", "h")
 
 
 SOURCE_SPLITS = ("train", "val")
+MAIN_CLIP_SPLIT = "main"
+FOLD_PREFIX = "fold_"
 
 
 class AnnotationTables(NamedTuple):
@@ -172,6 +176,50 @@ def load_split_clips(data_config_path: Path) -> dict[str, list[str]]:
     """
     splits = tomllib.loads(data_config_path.read_text())["splits"]
     return {split: list(splits[split]) for split in SOURCE_SPLITS}
+
+
+# https://scikit-learn.org/1.9/modules/generated/sklearn.model_selection.GroupKFold.html
+def assign_clip_folds(images: pl.DataFrame, n_folds: int, seed: int) -> list[list[str]]:
+    """Assign every clip to one cross-validation fold with a shuffled `GroupKFold`.
+
+    Clips are the groups, so all frames of a clip land in the same fold; the shuffled
+    variant assigns about the same number of clips to every fold.
+
+    Args:
+        images: Image table with one row per frame and its `clip`.
+        n_folds: Number of folds, at least 2.
+        seed: Seed of the clip shuffling.
+
+    Returns:
+        One sorted list of clip names per fold.
+    """
+    clips = images["clip"].to_numpy()
+    kfold = GroupKFold(n_splits=n_folds, shuffle=True, random_state=seed)
+    folds = kfold.split(np.zeros(len(clips)), groups=clips)
+    return [sorted(set(clips[held_out])) for _, held_out in folds]
+
+
+def load_clip_split(data_config_path: Path, clip_split: str) -> dict[str, list[str]]:
+    """Read the train and val clips of the adopted split or of one cross-validation fold.
+
+    Args:
+        data_config_path: Path of `config/data.toml`.
+        clip_split: `main` for the `[splits]` table, or `fold_<k>`, which holds out the
+            clips of `fold_<k>` in the `[folds]` table as val and trains on the other folds.
+
+    Returns:
+        Mapping from split name (`train`, `val`) to its clip names.
+    """
+    if clip_split == MAIN_CLIP_SPLIT:
+        return load_split_clips(data_config_path)
+    folds = tomllib.loads(data_config_path.read_text())["folds"]
+    if not clip_split.startswith(FOLD_PREFIX) or clip_split not in folds:
+        raise ValueError(
+            f"Unknown clip_split {clip_split!r}, expected {MAIN_CLIP_SPLIT} or one of "
+            f"{sorted(folds)}"
+        )
+    train = sorted(clip for fold, clips in folds.items() if fold != clip_split for clip in clips)
+    return {"train": train, "val": list(folds[clip_split])}
 
 
 TEST_IMAGES_COLUMNS = ("image_id", "file_name", "clip", "frame", "width", "height")

@@ -26,17 +26,22 @@ from src.models.registry import build_model
 from src.predict import (
     TEST_PREDICTIONS_FILE,
     create_inference_run,
-    load_run_config,
     run_prediction,
 )
 from src.submission.validate import validate_submission
 from src.train import run_training
-from src.training.experiment import CONFIG_FILE, format_toml, load_experiment_config
+from src.training.experiment import (
+    CONFIG_FILE,
+    format_toml,
+    load_experiment_config,
+    load_run_config,
+)
 from tests.test_experiment import BASELINE_TOML
 from tests.test_smoke import FASTER_RCNN_BASELINE, RETINANET_BASELINE
 
 TRAINING_ONLY_FIELDS_ADDED_WITH_RTDETR = ("amp_dtype", "grad_clip_norm")
 TRAINING_ONLY_FIELDS_ADDED_WITH_TRAIN_VAL = ("train_splits",)
+FIELDS_ADDED_WITH_FOLDS = ("clip_split",)
 TRAINING_ONLY_ROI_HEADS_FIELDS_ADDED_WITH_GIOU = ("box_loss", "giou_loss_weight")
 TRAINING_ONLY_TABLES_ADDED_WITH_FOCAL_LOSS = ("focal_loss",)
 TRAINING_ONLY_TABLES_ADDED_WITH_AUGMENTATION = ("augment", "ignored_regions")
@@ -203,6 +208,7 @@ def test_runs_resolved_before_training_only_fields_were_added_still_predict_and_
     removed = (
         TRAINING_ONLY_FIELDS_ADDED_WITH_RTDETR
         + TRAINING_ONLY_FIELDS_ADDED_WITH_TRAIN_VAL
+        + FIELDS_ADDED_WITH_FOLDS
         + TRAINING_ONLY_TABLES_ADDED_WITH_FOCAL_LOSS
         + TRAINING_ONLY_TABLES_ADDED_WITH_AUGMENTATION
     )
@@ -249,15 +255,17 @@ def test_runs_resolved_before_training_only_fields_were_added_still_predict_and_
     validate_submission(csv_path, test_images)
 
 
-def test_runs_resolved_before_an_inference_option_existed_get_its_baseline_value(
+def test_runs_resolved_before_an_option_existed_get_its_baseline_value(
     tmp_path: Path,
 ) -> None:
     config = load_experiment_config(FASTER_RCNN_BASELINE)
     legacy = config | {"inference": config["inference"] | {"score_thresh": 0.01}}
     del legacy["inference"]["hflip"]
     del legacy["inference"]["input_scale"]
+    del legacy["clip_split"]
     (tmp_path / CONFIG_FILE).write_text(format_toml(legacy))
     loaded = load_run_config(tmp_path)
+    assert loaded["clip_split"] == "main"
     assert loaded["inference"] == config["inference"] | {"score_thresh": 0.01}
     assert loaded["inference"]["hflip"] is False and loaded["inference"]["input_scale"] == 1.0
 

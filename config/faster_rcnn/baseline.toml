@@ -4,6 +4,7 @@ init = "coco"  # pretrained weights: coco (torchvision FasterRCNN_ResNet50_FPN_V
 trainable_backbone_layers = 3  # trainable ResNet stages counted from the last, 0 to 5; earlier stages are frozen (torchvision default 3)
 train_frames = "train_tuning"  # [frame_steps] key in config/data.toml: train_tuning (step 5) or train_final (step 2)
 train_splits = ["train"]  # clips trained on: ["train"] (the adopted split) or ["train", "val"] (final models for submission only: val is no longer held out, so per-epoch monitoring is skipped, best.pt is the last epoch, and the val metrics of the run are not comparable with other runs); val clips use the train_frames step
+clip_split = "main"  # clips of train and val: main (the adopted [splits] of config/data.toml) or fold_0, fold_1, fold_2 ([folds]: val is that fold, train the other two folds, for cross-validation of final candidates only); with train_splits ["train", "val"] only main
 min_size = 1024  # shorter frame side after resizing, in px; every frame becomes about 1024 x 1820 px
 max_size = 1824  # upper bound of the longer side after resizing, in px; set explicitly because torchvision's default 1333 would override min_size on 16:9 frames
 epochs = 10  # floor(5400 / 538) = floor(10.0), the 1.5 GPU hour baseline budget; 538 s/epoch from the timing run, including monitoring. Training epochs, integer of at least 1

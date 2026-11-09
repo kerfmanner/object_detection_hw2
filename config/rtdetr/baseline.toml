@@ -5,6 +5,7 @@ init = "coco"  # pretrained weights: coco (the arch checkpoint), the only suppor
 trainable_backbone_layers = 4  # trainable backbone units counted from the last, 0 to 5 (stem and 4 ResNet stages, as in torchvision); 4 freezes only the stem, as freeze_at 0 in the official R50 recipe
 train_frames = "train_tuning"  # [frame_steps] key in config/data.toml: train_tuning (step 5) or train_final (step 2)
 train_splits = ["train"]  # clips trained on: ["train"] (the adopted split) or ["train", "val"] (final models for submission only: val is no longer held out, so per-epoch monitoring is skipped, best.pt is the last epoch, and the val metrics of the run are not comparable with other runs); val clips use the train_frames step
+clip_split = "main"  # clips of train and val: main (the adopted [splits] of config/data.toml) or fold_0, fold_1, fold_2 ([folds]: val is that fold, train the other two folds, for cross-validation of final candidates only); with train_splits ["train", "val"] only main
 min_size = 1024  # shorter frame side after resizing, in px, rounded to the nearest px; every 16:9 frame becomes 1024 x 1820 px, the object scale of the torchvision families (not the processor's fixed 640 x 640)
 max_size = 1824  # upper bound of the longer side after resizing, in px; resized frames are zero-padded at the bottom and right to a multiple of 32 px
 epochs = 7  # training epochs, integer of at least 1; floor(5400 / 744) for the 1.5 GPU hour baseline budget, from the timing_b2 run (744 s/epoch on the PC)

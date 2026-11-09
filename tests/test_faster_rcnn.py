@@ -268,3 +268,16 @@ def test_train_and_val_configs_stop_at_the_best_epoch_of_their_reference(
         k: v for k, v in source.items() if k not in unchanged
     }
     check_training_budget(config)
+
+
+@pytest.mark.parametrize("fold", [0, 1, 2])
+def test_fold_configs_train_the_giou_member_on_the_other_folds(fold: int) -> None:
+    config = load_experiment_config(FASTER_RCNN_BASELINE.parent / f"cv_giou_loss_fold{fold}.toml")
+    final = load_experiment_config(FASTER_RCNN_BASELINE.parent / "trainval_giou_loss.toml")
+    assert config["run"]["experiment"] == f"faster_rcnn-cv_giou_loss_fold{fold}"
+    assert (config["clip_split"], config["train_splits"]) == (f"fold_{fold}", ["train"])
+    unchanged = ("run", "clip_split", "train_splits")
+    assert {k: v for k, v in config.items() if k not in unchanged} == {
+        k: v for k, v in final.items() if k not in unchanged
+    }
+    check_training_budget(config)

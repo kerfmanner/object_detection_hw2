@@ -1,5 +1,6 @@
 # Post-processing baseline: the saved predictions of the reference model rtdetr-baseline, unchanged (no fusion, no temporal rescoring), so that it reproduces the reference row
 members = ["rtdetr-baseline"]  # experiments whose saved predictions are combined, by name; each must have exactly one row in experiments/results.csv, whose run_dir holds val_predictions.parquet and predictions.csv
+clip_split = "main"  # clips the members were validated on: main (the adopted [splits] of config/data.toml) or fold_0, fold_1, fold_2 ([folds]); every member must have the same clip_split
 weights = [1.0]  # positive weight of each member, in the order of members; multiplies its scores in the fusion
 fusion = "none"  # none (exactly one member, predictions unchanged), wbf (Weighted Boxes Fusion, https://arxiv.org/abs/1910.13302), or nms (concatenation and per-class NMS)
 iou_thresh = 0.55  # IoU threshold of the fusion, in [0, 1]: wbf adds a box to a cluster above it, nms removes boxes above it; 0.55 is the default of the WBF reference implementation (https://github.com/ZFTurbo/Weighted-Boxes-Fusion)

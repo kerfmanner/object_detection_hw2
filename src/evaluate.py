@@ -7,8 +7,9 @@ from pathlib import Path
 import polars as pl
 from decouple import config
 
-from src.data.annotations import load_annotations, load_split_clips
+from src.data.annotations import load_annotations, load_clip_split
 from src.evaluation.coco_metrics import MAX_TEST_WIDTH, evaluate_detections
+from src.training.experiment import load_run_config
 
 logger = logging.getLogger(__name__)
 
@@ -106,13 +107,14 @@ def evaluate_run(run_dir: Path, data_root: Path, data_config_path: Path) -> dict
         run_dir: Run directory with `metrics.json` and `val_predictions.parquet` (real
             detections only: `image_id`, 0-based `class_id`, `score`, pixel `x`, `y`, `w`, `h`).
         data_root: Dataset root with the provided splits.
-        data_config_path: Path of `config/data.toml` with `[splits]`.
+        data_config_path: Path of `config/data.toml` with `[splits]` and `[folds]`.
 
     Returns:
         The updated `metrics.json` content; the shared evaluator output is under
         `evaluation`, other keys are kept.
     """
-    tables = load_annotations(data_root, load_split_clips(data_config_path))
+    clip_split = load_run_config(run_dir)["clip_split"]
+    tables = load_annotations(data_root, load_clip_split(data_config_path, clip_split))
     val_frames = tables.images.filter(pl.col("split") == "val").height
     metrics_path = run_dir / METRICS_FILE
     check_full_val_inference(metrics_path, val_frames)

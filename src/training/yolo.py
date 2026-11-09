@@ -12,7 +12,7 @@ from ultralytics import YOLO, settings
 from ultralytics.engine.trainer import BaseTrainer
 from ultralytics.utils.torch_utils import unwrap_model
 
-from src.data.annotations import load_annotations, load_split_clips
+from src.data.annotations import MAIN_CLIP_SPLIT, load_annotations, load_clip_split
 from src.data.dataset import load_frame_steps, select_smoke_frames
 from src.data.yolo_export import write_yolo_dataset
 from src.evaluate import DATA_CONFIG_PATH, METRICS_FILE
@@ -35,12 +35,15 @@ SAMPLE_PLOTS_PATTERN = "val_batch*_*.jpg"
 
 
 def check_training_budget(config: dict) -> None:
-    """Check the training frames, epochs, and batch size of a full YOLO run.
+    """Check the clip split, training frames, epochs, and batch size of a full YOLO run.
 
     Args:
-        config: Resolved configuration with `train_frames`, `epochs`, and `batch_size`.
+        config: Resolved configuration with `train_frames`, `clip_split`, `epochs`, and
+            `batch_size`.
     """
     problems = []
+    if config["clip_split"] != MAIN_CLIP_SPLIT:
+        problems.append(f"clip_split must be {MAIN_CLIP_SPLIT}; folds need the shared loop")
     if config["train_frames"] not in TRAIN_FRAME_STEPS:
         problems.append(f"train_frames must be one of {TRAIN_FRAME_STEPS}")
     if type(config["epochs"]) is not int or config["epochs"] < 1:
@@ -213,7 +216,7 @@ def train_yolo(
         run_dir: Run directory, or None for a smoke run that writes nothing.
         wandb_run: W&B run for curves and sample validation batches.
     """
-    images = load_annotations(data_root, load_split_clips(DATA_CONFIG_PATH)).images
+    images = load_annotations(data_root, load_clip_split(DATA_CONFIG_PATH, MAIN_CLIP_SPLIT)).images
     if run_dir is None:
         run_yolo_smoke(model, config, images, wandb_run)
         return

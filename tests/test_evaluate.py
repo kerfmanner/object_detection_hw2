@@ -13,7 +13,9 @@ from src.evaluate import (
     evaluate_run,
     format_results_row,
 )
+from src.training.experiment import CONFIG_FILE, format_toml, load_experiment_config
 from tests.conftest import SYNTHETIC_SPLIT_CLIPS
+from tests.test_smoke import FASTER_RCNN_BASELINE
 
 TRAINING = {
     "config": "config/faster_rcnn/baseline.toml",
@@ -58,6 +60,8 @@ def run_dir(tmp_path: Path, synthetic_annotations: AnnotationTables) -> Path:
         "image_id", "class_id", pl.lit(0.9).alias("score"), pl.col(BOX_COLUMNS).cast(pl.Float64)
     ).write_parquet(run_dir / PREDICTIONS_FILE)
     write_metrics(run_dir, {"training": TRAINING, "inference": INFERENCE})
+    run_config = load_experiment_config(FASTER_RCNN_BASELINE)
+    (run_dir / CONFIG_FILE).write_text(format_toml(run_config))
     return run_dir
 
 

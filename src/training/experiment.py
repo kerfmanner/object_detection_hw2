@@ -17,6 +17,29 @@ TRAIN_FRAME_STEPS = ("train_tuning", "train_final")
 TRAIN_SPLIT_CHOICES = (["train"], ["train", "val"])
 
 
+def load_run_config(run_dir: Path) -> dict:
+    """Read the resolved configuration of a run for prediction and evaluation.
+
+    `clip_split` and inference options added to the family baseline after the run was
+    resolved take their baseline value, which reproduces the earlier behaviour; options the
+    run records are kept.
+
+    Args:
+        run_dir: Run directory with the resolved `config.toml`, whose `run.baseline` names
+            the family baseline.
+
+    Returns:
+        The resolved configuration with `clip_split` and, for detector families, a complete
+        `[inference]` table.
+    """
+    config = tomllib.loads((run_dir / CONFIG_FILE).read_text())
+    baseline = tomllib.loads(Path(config["run"]["baseline"]).read_text())
+    resolved = {"clip_split": baseline["clip_split"]} | config
+    if "inference" in baseline:
+        resolved["inference"] = baseline["inference"] | config["inference"]
+    return resolved
+
+
 def merge_config(baseline: dict, override: dict, path: str = "") -> dict:
     """Merge experiment overrides into a family baseline, table by table.
 

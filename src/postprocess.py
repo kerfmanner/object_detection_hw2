@@ -12,7 +12,7 @@ from decouple import config
 from src.data.annotations import (
     AnnotationTables,
     load_annotations,
-    load_split_clips,
+    load_clip_split,
     load_test_images,
 )
 from src.evaluate import (
@@ -44,6 +44,7 @@ from src.training.experiment import (
     describe_run,
     format_toml,
     load_experiment_config,
+    load_run_config,
     merge_config,
 )
 
@@ -191,11 +192,12 @@ def run_postprocess(
     `metrics.json` with `training` (`describe_members`) and `inference`, the val predictions,
     and a validated `predictions.csv`, so that `src.evaluate` works on it unchanged. Its
     ms/image is the sum of the members' ms/image plus the post-processing time per val frame.
+    All members must have been validated on the config's `clip_split`.
 
     Args:
         config_path: Path `config/postprocess/<name>.toml`.
         data_root: Dataset root with the provided splits and `test_images.csv`.
-        data_config_path: Path of `config/data.toml` with `[splits]`.
+        data_config_path: Path of `config/data.toml` with `[splits]` and `[folds]`.
         runs_root: Root directory of all runs, e.g. `runs/`.
         results_path: Path of `experiments/results.csv`.
 
@@ -206,7 +208,12 @@ def run_postprocess(
     if len(config["weights"]) != len(config["members"]):
         raise ValueError(f"{config_path} needs one weight per member")
     member_dirs = [find_run_dir(results_path, experiment) for experiment in config["members"]]
-    tables = load_annotations(data_root, load_split_clips(data_config_path))
+    member_splits = {load_run_config(d)["clip_split"] for d in member_dirs}
+    if member_splits != {config["clip_split"]}:
+        raise ValueError(
+            f"{config_path} has clip_split {config['clip_split']!r}, its members {member_splits}"
+        )
+    tables = load_annotations(data_root, load_clip_split(data_config_path, config["clip_split"]))
     val_images = tables.images.filter(pl.col("split") == "val")
     for member_dir in member_dirs:
         check_full_val_inference(member_dir / METRICS_FILE, val_images.height)

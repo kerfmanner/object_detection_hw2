@@ -129,6 +129,8 @@ def test_checkpoint_with_other_classes_is_rejected(baseline_config: dict) -> Non
 def test_full_run_needs_epochs_and_batch_size(baseline_config: dict) -> None:
     with pytest.raises(ValueError, match="epochs must be.*batch_size must be"):
         check_training_budget(baseline_config | {"epochs": 0, "batch_size": 0})
+    with pytest.raises(ValueError, match="clip_split must be main"):
+        check_training_budget(baseline_config | {"clip_split": "fold_0"})
     timing = load_experiment_config(YOLO_CONFIG_DIR / "timing.toml")
     check_training_budget(timing)
     assert timing["close_mosaic"] == 0 and baseline_config["close_mosaic"] == 10

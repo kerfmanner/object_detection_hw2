@@ -2,6 +2,7 @@
 arch = "yolo11s"  # Ultralytics model name; weights <arch>.pt: yolo11n, yolo11s, yolo11m, yolo11l, yolo11x
 init = "coco"  # pretrained weights: coco (Ultralytics COCO checkpoint <arch>.pt), the only supported value
 train_frames = "train_tuning"  # [frame_steps] key in config/data.toml: train_tuning (step 5) or train_final (step 2)
+clip_split = "main"  # clips of train and val: main (the adopted [splits] of config/data.toml), the only value YOLO supports; the fold_<k> splits of [folds] are for the shared-loop families
 imgsz = 1824  # train and inference input size in px, multiple of 32; the longer frame side is resized to it
 epochs = 20  # TODO: set after the timing run; training epochs, integer of at least 1
 batch_size = 2  # TODO: set after the timing run; images per batch, integer of at least 1, or -1 for Ultralytics AutoBatch; gradients accumulate over round(64 / batch_size) batches (Ultralytics nbs 64)

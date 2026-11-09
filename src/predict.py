@@ -9,7 +9,7 @@ from pathlib import Path
 import polars as pl
 from decouple import config
 
-from src.data.annotations import load_annotations, load_split_clips, load_test_images
+from src.data.annotations import load_annotations, load_clip_split, load_test_images
 from src.evaluate import (
     DATA_CONFIG_PATH,
     METRICS_FILE,
@@ -30,6 +30,7 @@ from src.training.experiment import (
     create_run_dir,
     describe_run,
     format_toml,
+    load_run_config,
     merge_config,
     name_experiment,
 )
@@ -41,24 +42,6 @@ TEST_PREDICTIONS_FILE = "predictions.csv"
 PREDICTION_SPLITS = ("val", "test")
 SOURCE_KEY = "source"
 INFERENCE_CONFIG_KEYS = (SOURCE_KEY, "min_size", "max_size", "imgsz", "inference")
-
-
-def load_run_config(run_dir: Path) -> dict:
-    """Read the resolved configuration of a run for prediction.
-
-    Inference options added to the family baseline after the run was resolved take their
-    baseline value, which reproduces the earlier behaviour; options the run records are kept.
-
-    Args:
-        run_dir: Run directory with the resolved `config.toml`, whose `run.baseline` names
-            the family baseline.
-
-    Returns:
-        The resolved configuration with a complete `[inference]` table.
-    """
-    config = tomllib.loads((run_dir / CONFIG_FILE).read_text())
-    baseline = tomllib.loads(Path(config["run"]["baseline"]).read_text())
-    return config | {"inference": baseline["inference"] | config["inference"]}
 
 
 def create_inference_run(config_path: Path, runs_root: Path, results_path: Path) -> Path:
@@ -181,7 +164,7 @@ def run_prediction(run_dir: Path, split: str, data_root: Path, data_config_path:
         run_dir: Run directory with the resolved `config.toml` and `best.pt`.
         split: `val` for `val_predictions.parquet`, `test` for `predictions.csv`.
         data_root: Dataset root with the provided splits and `test_images.csv`.
-        data_config_path: Path of `config/data.toml` with `[splits]`.
+        data_config_path: Path of `config/data.toml` with `[splits]` and `[folds]`.
 
     Returns:
         Path of the written predictions file.
@@ -194,7 +177,7 @@ def run_prediction(run_dir: Path, split: str, data_root: Path, data_config_path:
         test_images = load_test_images(data_root)
         predictions, _ = predict_frames(model, run_dir / CHECKPOINT_FILE, test_images, config)
         return write_test_predictions(run_dir, predictions, test_images)
-    tables = load_annotations(data_root, load_split_clips(data_config_path))
+    tables = load_annotations(data_root, load_clip_split(data_config_path, config["clip_split"]))
     val_images = tables.images.filter(pl.col("split") == "val")
     predictions, ms_per_image = predict_frames(model, run_dir / CHECKPOINT_FILE, val_images, config)
     write_val_predictions(run_dir, predictions, val_images, ms_per_image)

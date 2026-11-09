@@ -1,0 +1,14 @@
+# Cross-validation fold 2 of a two-family ensemble: WBF of rtdetr-cv_recipe_step2_fold2 and faster_rcnn-cv_giou_loss_fold2 with the fusion and temporal settings of ens_rtdetr4_frcnn2_yolo2_smooth, to check on 21 clips per fold whether fusing the two families beats the RT-DETR member alone
+clip_split = "fold_2"  # baseline main
+members = ["rtdetr-cv_recipe_step2_fold2", "faster_rcnn-cv_giou_loss_fold2"]  # the two fold 2 runs
+weights = [1.0, 1.0]  # equal, as ens_rtdetr4_frcnn2_yolo2_smooth
+fusion = "wbf"  # as ens_rtdetr4_frcnn2_yolo2_smooth
+iou_thresh = 0.65  # as ens_rtdetr4_frcnn2_yolo2_smooth
+
+[temporal]
+enabled = true  # as ens_rtdetr4_frcnn2_yolo2_smooth
+link_iou = 0.5  # as ens_rtdetr4_frcnn2_yolo2_smooth
+min_score = 0.0  # as ens_rtdetr4_frcnn2_yolo2_smooth
+weight = 0.5  # as ens_rtdetr4_frcnn2_yolo2_smooth
+statistic = "max"  # as ens_rtdetr4_frcnn2_yolo2_smooth
+should_smooth_boxes = true  # as ens_rtdetr4_frcnn2_yolo2_smooth

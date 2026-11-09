@@ -225,6 +225,9 @@ def test_full_run_needs_epochs_batch_size_and_lr(baseline_path: Path) -> None:
     with pytest.raises(ValueError, match="train_frames must be"):
         check_training_budget(timing | {"train_frames": "val_reporting"})
     check_training_budget(baseline | {"train_splits": ["train", "val"]})
+    check_training_budget(baseline | {"clip_split": "fold_1"})
+    with pytest.raises(ValueError, match="train_splits with val needs clip_split main"):
+        check_training_budget(baseline | {"train_splits": ["train", "val"], "clip_split": "fold_1"})
     for train_splits in (["val"], ["train", "test"], "train"):
         with pytest.raises(ValueError, match="train_splits must be one of"):
             check_training_budget(baseline | {"train_splits": train_splits})

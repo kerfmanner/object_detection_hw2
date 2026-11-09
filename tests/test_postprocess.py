@@ -20,7 +20,8 @@ from src.postprocess import run_postprocess
 from src.predict import TEST_PREDICTIONS_FILE
 from src.submission.validate import read_submission_predictions
 from src.submission.writer import write_submission
-from src.training.experiment import CONFIG_FILE, load_experiment_config
+from src.training.experiment import CONFIG_FILE, format_toml, load_experiment_config
+from tests.test_smoke import FASTER_RCNN_BASELINE
 
 POSTPROCESS_DIR = Path(__file__).resolve().parents[1] / "config" / "postprocess"
 MEMBER_TRAINING = dict.fromkeys(TRAINING_FIELDS, 1) | {
@@ -49,8 +50,11 @@ def write_member_run(
     test_images: pl.DataFrame,
     training: dict,
     ms_per_image: float,
+    clip_split: str,
 ) -> None:
     run_dir.mkdir(parents=True)
+    run_config = load_experiment_config(FASTER_RCNN_BASELINE) | {"clip_split": clip_split}
+    (run_dir / CONFIG_FILE).write_text(format_toml(run_config))
     val_predictions.write_parquet(run_dir / PREDICTIONS_FILE)
     write_submission(TEST_BOXES, test_images, run_dir / TEST_PREDICTIONS_FILE)
     inference = {"split": "val", "frame_step": 1, "num_frames": 3, "ms_per_image": ms_per_image}
@@ -68,10 +72,10 @@ def members(
     )
     trained = tmp_path / "runs" / "toy-baseline" / "20261108-1000"
     flipped = tmp_path / "runs" / "toy-infer_hflip" / "20261108-1100"
-    write_member_run(trained, ground_truth, test_images, MEMBER_TRAINING, 50.0)
+    write_member_run(trained, ground_truth, test_images, MEMBER_TRAINING, 50.0, "main")
     flipped_training = MEMBER_TRAINING | {"source_run": trained.as_posix()}
     rescored = ground_truth.with_columns(pl.lit(0.7).alias("score"))
-    write_member_run(flipped, rescored, test_images, flipped_training, 52.0)
+    write_member_run(flipped, rescored, test_images, flipped_training, 52.0, "main")
     results_path = tmp_path / "results.csv"
     rows = [
         dict.fromkeys(RESULTS_COLUMNS, "") | {"experiment": name, "run_dir": run_dir.as_posix()}
@@ -151,6 +155,20 @@ def test_unfused_post_processing_needs_one_member_and_one_weight_each(
             run_postprocess(config_path, data_root, data_config, tmp_path / "runs", results_path)
 
 
+def test_members_validated_on_another_clip_split_are_rejected(
+    members: tuple[Path, list[Path]], prediction_data: tuple[Path, Path], tmp_path: Path
+) -> None:
+    results_path, _ = members
+    data_root, data_config = prediction_data
+    content = (
+        '# Fold\nclip_split = "fold_0"\nmembers = ["toy-baseline", "toy-infer_hflip"]\n'
+        'weights = [1.0, 1.0]\nfusion = "wbf"\n'
+    )
+    config_path = write_postprocess_config(tmp_path, "fold", content)
+    with pytest.raises(ValueError, match="has clip_split 'fold_0', its members \\{'main'\\}"):
+        run_postprocess(config_path, data_root, data_config, tmp_path / "runs", results_path)
+
+
 @pytest.mark.parametrize("config_path", sorted(POSTPROCESS_DIR.glob("*.toml")))
 def test_post_processing_configs_resolve_with_one_weight_per_member(config_path: Path) -> None:
     config = load_experiment_config(config_path)
@@ -158,3 +176,9 @@ def test_post_processing_configs_resolve_with_one_weight_per_member(config_path:
     assert len(config["weights"]) == len(config["members"]) and min(config["weights"]) > 0
     assert (config["fusion"] == "none") == (len(config["members"]) == 1)
     assert config_path.read_text().startswith("# ")
+    if config["clip_split"] != "main":
+        member_configs = [
+            load_experiment_config(Path("config") / family / f"{stem}.toml")
+            for family, stem in (member.split("-", 1) for member in config["members"])
+        ]
+        assert {member["clip_split"] for member in member_configs} == {config["clip_split"]}
