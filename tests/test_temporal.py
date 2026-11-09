@@ -8,6 +8,7 @@ from src.inference.temporal import (
     link_track_ids,
     match_greedily,
     rescore_along_tracks,
+    rescore_tracks,
     smooth_boxes_along_tracks,
 )
 from tests.test_fusion import build_predictions
@@ -67,15 +68,61 @@ def test_scores_move_toward_the_track_statistic_and_singletons_keep_theirs() -> 
             (5, 2, 0.05, 0, 0, 10, 10),
         ]
     )
-    rescored = rescore_along_tracks(predictions, IMAGES, 0.5, 0.1, weight=0.5, statistic="mean")
+    rescored = rescore_along_tracks(
+        predictions, IMAGES, 0.5, 0.1, weight=0.5, statistic="mean", is_causal=False
+    )
     assert rescored.columns == list(PREDICTION_COLUMNS)
     assert rescored.sort("image_id")["score"].to_list() == pytest.approx(
         [0.75, 0.45, 0.6, 0.7, 0.05]
     )
-    maximum = rescore_along_tracks(predictions, IMAGES, 0.5, 0.1, weight=1.0, statistic="max")
+    maximum = rescore_along_tracks(
+        predictions, IMAGES, 0.5, 0.1, weight=1.0, statistic="max", is_causal=False
+    )
     assert maximum.sort("image_id")["score"].to_list()[:3] == pytest.approx([0.9] * 3)
-    unchanged = rescore_along_tracks(predictions, IMAGES, 0.5, 0.0, weight=0.0, statistic="mean")
+    unchanged = rescore_along_tracks(
+        predictions, IMAGES, 0.5, 0.0, weight=0.0, statistic="mean", is_causal=False
+    )
     assert unchanged.sort("image_id").equals(predictions.sort("image_id"))
+
+
+@pytest.mark.parametrize(
+    ("statistic", "expected"), [("max", [0.3, 0.9, 0.75]), ("mean", [0.3, 0.75, 0.6])]
+)
+def test_causal_rescoring_uses_only_the_current_and_earlier_frames(
+    statistic: str, expected: list[float]
+) -> None:
+    predictions = build_predictions(
+        [(1, 0, 0.3, 0, 0, 10, 10), (2, 0, 0.9, 1, 0, 10, 10), (3, 0, 0.6, 2, 0, 10, 10)]
+    )
+    rescored = rescore_along_tracks(
+        predictions, IMAGES, 0.5, 0.0, weight=0.5, statistic=statistic, is_causal=True
+    )
+    assert rescored.sort("image_id")["score"].to_list() == pytest.approx(expected)
+
+
+def test_rescoring_tracked_detections_keeps_their_extra_columns() -> None:
+    predictions = build_predictions([(1, 0, 0.2, 0, 0, 10, 10), (2, 0, 0.8, 0, 0, 10, 10)])
+    tracked = assign_tracks(predictions, IMAGES, 0.5, 0.0).with_columns(raw_score=pl.col("score"))
+    rescored = rescore_tracks(tracked, weight=1.0, statistic="max", is_causal=False)
+    assert rescored["raw_score"].to_list() == pytest.approx([0.2, 0.8])
+    assert rescored["score"].to_list() == pytest.approx([0.8, 0.8])
+
+
+def test_causal_smoothing_uses_only_the_previous_box() -> None:
+    predictions = build_predictions(
+        [
+            (1, 0, 0.9, 10, 0, 10, 10),
+            (2, 0, 0.8, 13, 0, 10, 10),
+            (3, 0, 0.7, 16, 0, 13, 10),
+        ]
+    )
+    smoothed = smooth_boxes_along_tracks(
+        predictions, IMAGES, link_iou=0.3, min_score=0.0, is_causal=True
+    )
+    boxes = {row[0]: row[3:] for row in smoothed.rows()}
+    assert boxes[1] == pytest.approx((10.0, 0.0, 10.0, 10.0))
+    assert boxes[2] == pytest.approx((12.0, 0.0, 10.0, 10.0))
+    assert boxes[3] == pytest.approx((15.0, 0.0, 12.0, 10.0))
 
 
 def test_boxes_inside_tracks_are_smoothed_and_constant_motion_is_kept() -> None:
@@ -90,7 +137,9 @@ def test_boxes_inside_tracks_are_smoothed_and_constant_motion_is_kept() -> None:
             (4, 0, 0.6, 14, 0, 12, 10),
         ]
     )
-    smoothed = smooth_boxes_along_tracks(predictions, IMAGES, link_iou=0.3, min_score=0.0)
+    smoothed = smooth_boxes_along_tracks(
+        predictions, IMAGES, link_iou=0.3, min_score=0.0, is_causal=False
+    )
     assert smoothed.columns == list(PREDICTION_COLUMNS)
     rows = {(row[0], row[1]): row[2:] for row in smoothed.rows()}
     assert rows[(2, 0)] == pytest.approx((0.8, 12.5, 0.0, 10.5, 10.0))
@@ -107,8 +156,8 @@ def test_boxes_inside_tracks_are_smoothed_and_constant_motion_is_kept() -> None:
 def test_invalid_rescoring_settings_and_unknown_frames_are_rejected() -> None:
     predictions = build_predictions([(1, 0, 0.9, 0, 0, 10, 10)])
     with pytest.raises(ValueError, match="statistic must be one of"):
-        rescore_along_tracks(predictions, IMAGES, 0.5, 0.0, 0.5, "median")
+        rescore_along_tracks(predictions, IMAGES, 0.5, 0.0, 0.5, "median", False)
     with pytest.raises(ValueError, match="weight must be in"):
-        rescore_along_tracks(predictions, IMAGES, 0.5, 0.0, 1.5, "mean")
+        rescore_along_tracks(predictions, IMAGES, 0.5, 0.0, 1.5, "mean", False)
     with pytest.raises(ValueError, match="needs a clip and frame_id"):
         assign_tracks(build_predictions([(9, 0, 0.9, 0, 0, 10, 10)]), IMAGES, 0.5, 0.0)

@@ -85,10 +85,13 @@ def postprocess_predictions(
         temporal["min_score"],
         temporal["weight"],
         temporal["statistic"],
+        temporal["is_causal"],
     )
     if not temporal["should_smooth_boxes"]:
         return rescored
-    return smooth_boxes_along_tracks(rescored, images, temporal["link_iou"], temporal["min_score"])
+    return smooth_boxes_along_tracks(
+        rescored, images, temporal["link_iou"], temporal["min_score"], temporal["is_causal"]
+    )
 
 
 def evaluate_postprocess_settings(
@@ -113,7 +116,7 @@ def evaluate_postprocess_settings(
         clip_folds: Fold name of every val clip.
 
     Returns:
-        One row per setting with `setting` (the override as JSON), `map`, `map50`,
+        One row per setting with `setting` (the override as JSON), `map`, `map50`, `map75`,
         `ap_small`, `map_max_width_1920`, one `ap_<class>` column per class, and
         `map_<fold>` per fold.
     """
@@ -129,7 +132,7 @@ def evaluate_postprocess_settings(
         folds = evaluate_frame_groups(tables, "val", predictions, frame_groups)
         rows.append(
             {"setting": json.dumps(setting)}
-            | {key: metrics[key] for key in ("map", "map50", "ap_small")}
+            | {key: metrics[key] for key in ("map", "map50", "map75", "ap_small")}
             | {f"map_max_width_{MAX_TEST_WIDTH}": metrics[f"map_max_width_{MAX_TEST_WIDTH}"]}
             | {f"ap_{name}": ap for name, ap in metrics["per_class_ap"].items()}
             | {f"map_{group}": value for group, value in folds.select("group", "map").rows()}

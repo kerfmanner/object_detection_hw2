@@ -13,4 +13,5 @@ link_iou = 0.5  # minimum IoU of a one-to-one link between detections of consecu
 min_score = 0.0  # detections below this score are neither linked nor rescored, in [0, 1]
 weight = 0.5  # share of the track score in the new score, in [0, 1]
 statistic = "mean"  # track score: mean (Seq-NMS average, https://arxiv.org/abs/1602.08465) or max of the scores along the track
+is_causal = false  # true uses only the current and earlier frames of a track (running track statistic, box smoothing (previous + 2 * current) / 3), as an online detector; false uses the whole track and both neighbouring frames
 should_smooth_boxes = false  # true also replaces every box linked in both neighbouring frames with (previous + 2 * current + next) / 4 after the rescoring (smooth_boxes_along_tracks); false keeps the boxes

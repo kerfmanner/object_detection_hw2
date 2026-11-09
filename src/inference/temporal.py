@@ -96,6 +96,48 @@ def assign_tracks(
     )
 
 
+def rescore_tracks(
+    tracked: pl.DataFrame, weight: float, statistic: str, is_causal: bool
+) -> pl.DataFrame:
+    """Move every tracked detection score toward a statistic of its track's scores.
+
+    Seq-NMS rescores linked detections with the average score of their sequence
+    (https://arxiv.org/abs/1602.08465); here a detection's new score is
+    `(1 - weight) * score + weight * track_score`, where `track_score` is the mean or the
+    maximum score along its track. A track of one detection keeps its score, so detections
+    that appear in a single frame are ranked below equally scored ones confirmed by the next
+    frames. Detections without a track keep their score. A causal `track_score` uses only the
+    current and earlier frames of the track (running mean or maximum), as an online detector
+    would; otherwise it uses the whole track.
+
+    Args:
+        tracked: Result of `assign_tracks`, possibly with extra columns.
+        weight: Share of the track score in the new score, in [0, 1].
+        statistic: `mean` or `max` of the scores along a track.
+        is_causal: Whether the track statistic covers only the frames up to the current one.
+
+    Returns:
+        The columns of `tracked` with the new `score`, sorted by `track_id` and `frame_id`.
+    """
+    if statistic not in TRACK_STATISTICS:
+        raise ValueError(f"statistic must be one of {TRACK_STATISTICS}, got {statistic!r}")
+    if not 0 <= weight <= 1:
+        raise ValueError(f"weight must be in [0, 1], got {weight}")
+    score = pl.col("score")
+    if not is_causal:
+        track_score = getattr(score, statistic)().over("track_id")
+    elif statistic == "max":
+        track_score = score.cum_max().over("track_id")
+    else:
+        track_score = (score.cum_sum() / score.cum_count()).over("track_id")
+    return tracked.sort("track_id", "frame_id").with_columns(
+        pl.when(pl.col("track_id").is_null())
+        .then(score)
+        .otherwise((1 - weight) * score + weight * track_score)
+        .alias("score")
+    )
+
+
 def rescore_along_tracks(
     predictions: pl.DataFrame,
     images: pl.DataFrame,
@@ -103,15 +145,9 @@ def rescore_along_tracks(
     min_score: float,
     weight: float,
     statistic: str,
+    is_causal: bool,
 ) -> pl.DataFrame:
-    """Move every detection score toward a statistic of its track's scores.
-
-    Seq-NMS rescores linked detections with the average score of their sequence
-    (https://arxiv.org/abs/1602.08465); here a detection's new score is
-    `(1 - weight) * score + weight * track_score`, where `track_score` is the mean or the
-    maximum score along its track from `assign_tracks`. A track of one detection keeps its
-    score, so detections that appear in a single frame are ranked below equally scored ones
-    confirmed by the next frames. Detections without a track keep their score.
+    """Link the detections into tracks and rescore them along the tracks with `rescore_tracks`.
 
     Args:
         predictions: Table with `PREDICTION_COLUMNS` on consecutive frames of clips.
@@ -120,62 +156,60 @@ def rescore_along_tracks(
         min_score: Detections below this score are neither linked nor rescored.
         weight: Share of the track score in the new score, in [0, 1].
         statistic: `mean` or `max` of the scores along a track.
+        is_causal: Whether the track statistic covers only the frames up to the current one.
 
     Returns:
         The same detections with `PREDICTION_COLUMNS` and the new `score`, sorted by
         `image_id` and descending score.
     """
-    if statistic not in TRACK_STATISTICS:
-        raise ValueError(f"statistic must be one of {TRACK_STATISTICS}, got {statistic!r}")
-    if not 0 <= weight <= 1:
-        raise ValueError(f"weight must be in [0, 1], got {weight}")
-    track_score = getattr(pl.col("score"), statistic)().over("track_id")
-    rescored = assign_tracks(predictions, images, link_iou, min_score).with_columns(
-        pl.when(pl.col("track_id").is_null())
-        .then(pl.col("score"))
-        .otherwise((1 - weight) * pl.col("score") + weight * track_score)
-        .alias("score")
-    )
-    return rescored.select(PREDICTION_COLUMNS).sort(
-        "image_id", "score", descending=[False, True], maintain_order=True
+    tracked = assign_tracks(predictions, images, link_iou, min_score)
+    return (
+        rescore_tracks(tracked, weight, statistic, is_causal)
+        .select(PREDICTION_COLUMNS)
+        .sort("image_id", "score", descending=[False, True], maintain_order=True)
     )
 
 
 def smooth_boxes_along_tracks(
-    predictions: pl.DataFrame, images: pl.DataFrame, link_iou: float, min_score: float
+    predictions: pl.DataFrame,
+    images: pl.DataFrame,
+    link_iou: float,
+    min_score: float,
+    is_causal: bool,
 ) -> pl.DataFrame:
-    """Average every box linked in both the previous and the next frame with those two boxes.
+    """Average every box with the boxes of its track in the neighbouring frames.
 
     The box of a detection in the middle of its track from `assign_tracks` becomes
     `(previous + 2 * current + next) / 4`, coordinate by coordinate, a binomial filter that
-    reduces frame-to-frame jitter and leaves constant motion unchanged. Detections at track
-    ends and without a track keep their boxes; scores are unchanged.
+    reduces frame-to-frame jitter and leaves constant motion unchanged. The causal filter
+    drops the next frame: every box with a previous box in its track becomes
+    `(previous + 2 * current) / 3`, which lags behind moving objects. Other detections keep
+    their boxes; scores are unchanged.
 
     Args:
         predictions: Table with `PREDICTION_COLUMNS` on consecutive frames of clips.
         images: Image table with `image_id`, `clip`, and `frame_id` of the predicted frames.
         link_iou: Minimum IoU of a link between consecutive frames.
         min_score: Detections below this score are neither linked nor smoothed.
+        is_causal: Whether the filter uses only the previous frame instead of both neighbours.
 
     Returns:
         The same detections with `PREDICTION_COLUMNS` and the smoothed boxes, sorted by
         `image_id` and descending score.
     """
     tracked = assign_tracks(predictions, images, link_iou, min_score).sort("track_id", "frame_id")
-    is_inside_track = (
-        pl.col("track_id").is_not_null()
-        & pl.col("frame_id").shift(1).over("track_id").is_not_null()
-        & pl.col("frame_id").shift(-1).over("track_id").is_not_null()
-    )
+    has_previous = pl.col("frame_id").shift(1).over("track_id").is_not_null()
+    has_next = pl.col("frame_id").shift(-1).over("track_id").is_not_null()
+    is_smoothed = pl.col("track_id").is_not_null() & has_previous & (is_causal | has_next)
+    neighbours = [1] if is_causal else [1, -1]
     smoothed = tracked.with_columns(
-        pl.when(is_inside_track)
+        pl.when(is_smoothed)
         .then(
-            (
-                pl.col(column).shift(1).over("track_id")
-                + 2 * pl.col(column)
-                + pl.col(column).shift(-1).over("track_id")
+            pl.sum_horizontal(
+                2 * pl.col(column),
+                *(pl.col(column).shift(shift).over("track_id") for shift in neighbours),
             )
-            / 4
+            / (2 + len(neighbours))
         )
         .otherwise(pl.col(column))
         .alias(column)
