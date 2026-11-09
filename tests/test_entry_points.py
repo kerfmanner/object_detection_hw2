@@ -40,6 +40,7 @@ TRAINING_ONLY_ROI_HEADS_FIELDS_ADDED_WITH_GIOU = ("box_loss", "giou_loss_weight"
 TRAINING_ONLY_TABLES_ADDED_WITH_FOCAL_LOSS = ("focal_loss",)
 TRAINING_ONLY_TABLES_ADDED_WITH_AUGMENTATION = ("augment", "ignored_regions")
 INFERENCE_FIELDS_ADDED_WITH_FLIP = ("hflip",)
+INFERENCE_FIELDS_ADDED_WITH_LOW_RES = ("input_scale",)
 
 
 @pytest.fixture
@@ -208,7 +209,7 @@ def test_runs_resolved_before_training_only_fields_were_added_still_predict_and_
     legacy["inference"] = {
         key: value
         for key, value in inference.items()
-        if key not in INFERENCE_FIELDS_ADDED_WITH_FLIP
+        if key not in INFERENCE_FIELDS_ADDED_WITH_FLIP + INFERENCE_FIELDS_ADDED_WITH_LOW_RES
     }
     assert set(TRAINING_ONLY_FIELDS_ADDED_WITH_RTDETR) <= set(resolved) - set(legacy)
     assert ("focal_loss" in resolved) == (baseline_path == RETINANET_BASELINE)
@@ -252,10 +253,11 @@ def test_runs_resolved_before_an_inference_option_existed_get_its_baseline_value
     config = load_experiment_config(FASTER_RCNN_BASELINE)
     legacy = config | {"inference": config["inference"] | {"score_thresh": 0.01}}
     del legacy["inference"]["hflip"]
+    del legacy["inference"]["input_scale"]
     (tmp_path / CONFIG_FILE).write_text(format_toml(legacy))
     loaded = load_run_config(tmp_path)
     assert loaded["inference"] == config["inference"] | {"score_thresh": 0.01}
-    assert loaded["inference"]["hflip"] is False
+    assert loaded["inference"]["hflip"] is False and loaded["inference"]["input_scale"] == 1.0
 
 
 SOURCE_TRAINING = dict.fromkeys(TRAINING_FIELDS, 1) | {

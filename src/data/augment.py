@@ -63,20 +63,69 @@ def flip_frame(
     return image.flip(-1), flipped
 
 
+def shrink_frame(image: torch.Tensor, factor: float) -> torch.Tensor:
+    """Resize a frame by a factor with antialiasing, as a lower-resolution camera records it.
+
+    Args:
+        image: Tensor (3, height, width).
+        factor: Linear scale factor, e.g. 0.5 halves both sides.
+
+    Returns:
+        Tensor (3, round(height * factor), round(width * factor)) of the same dtype.
+    """
+    height, width = image.shape[-2:]
+    return v2.functional.resize(
+        image, [round(height * factor), round(width * factor)], antialias=True
+    )
+
+
+def downscale_frame(
+    image: torch.Tensor, target: dict[str, torch.Tensor], factor: float
+) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    """Shrink a frame with `shrink_frame` and scale the boxes of its target alike.
+
+    The detector's own resize to its input size then enlarges the frame again, so the frame
+    keeps its input scale and loses detail, the downscale and upscale back of Albumentations
+    `Downscale`:
+    https://github.com/albumentations-team/albumentations/blob/1.4.24/albumentations/augmentations/transforms.py#L3387
+
+    Args:
+        image: Tensor (3, height, width).
+        target: Target with `boxes` and `ignored_boxes` (`x1, y1, x2, y2` in px); other keys
+            are kept.
+        factor: Linear scale factor in (0, 1).
+
+    Returns:
+        The shrunk frame and a new target with `boxes` and `ignored_boxes` in its pixels.
+    """
+    height, width = image.shape[-2:]
+    shrunk = shrink_frame(image, factor)
+    scale = torch.tensor([shrunk.shape[-1] / width, shrunk.shape[-2] / height] * 2)
+    downscaled = dict(target)
+    for key in ("boxes", "ignored_boxes"):
+        downscaled[key] = target[key] * scale
+    return shrunk, downscaled
+
+
 def augment_training_frame(
     image: torch.Tensor,
     target: dict[str, torch.Tensor],
     mask_fill: list[int] | None,
     photometric: v2.RandomPhotometricDistort | None,
+    low_res_prob: float,
+    low_res_factor: float,
     is_flip_enabled: bool,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
-    """Mask, photometrically distort, and flip one training frame, each step optional.
+    """Mask, photometrically distort, downscale, and flip one training frame, each step
+    optional.
 
     Args:
         image: uint8 tensor (3, height, width).
         target: `VisDroneDataset` target with `boxes`, `labels`, and `ignored_boxes`.
         mask_fill: RGB colour for `mask_ignored_regions`, or None to keep ignored regions.
         photometric: Photometric distortion of the image, or None.
+        low_res_prob: Probability of `downscale_frame`, 0 to keep the resolution.
+        low_res_factor: Linear scale factor of `downscale_frame`.
         is_flip_enabled: Whether to flip the frame with probability 0.5.
 
     Returns:
@@ -86,6 +135,8 @@ def augment_training_frame(
         image = mask_ignored_regions(image, target["ignored_boxes"], target["boxes"], mask_fill)
     if photometric is not None:
         image = photometric(image)
+    if low_res_prob > 0 and torch.rand(()) < low_res_prob:
+        image, target = downscale_frame(image, target, low_res_factor)
     if is_flip_enabled and torch.rand(()) < FLIP_PROBABILITY:
         image, target = flip_frame(image, target)
     return image, target
@@ -97,12 +148,13 @@ def build_train_transform(config: dict, is_clean: bool) -> FrameTransform | None
     The flip and the photometric distortion follow the official RT-DETRv2 training recipe
     (https://github.com/lyuwenyu/RT-DETR/blob/main/rtdetrv2_pytorch/configs/rtdetrv2/include/dataloader.yml):
     `RandomHorizontalFlip` with p 0.5 and torchvision's `RandomPhotometricDistort` with p
-    0.5 and its default ranges. Clean epochs, the recipe's last epochs without augmentation,
-    keep only the masking of ignored regions, which is a separate data strategy.
+    0.5 and its default ranges. `low_res_prob` shrinks frames with `downscale_frame`. Clean
+    epochs, the recipe's last epochs without augmentation, keep only the masking of ignored
+    regions, which is a separate data strategy.
 
     Args:
-        config: Resolved configuration with the `[augment]` (`hflip`, `photometric`) and
-            `[ignored_regions]` (`mask`, `fill`) tables.
+        config: Resolved configuration with the `[augment]` (`hflip`, `photometric`,
+            `low_res_prob`, `low_res_factor`) and `[ignored_regions]` (`mask`, `fill`) tables.
         is_clean: Whether the transform is for the clean epochs.
 
     Returns:
@@ -114,9 +166,15 @@ def build_train_transform(config: dict, is_clean: bool) -> FrameTransform | None
         len(mask_fill) != 3 or not all(0 <= value <= 255 for value in mask_fill)
     ):
         raise ValueError(f"ignored_regions.fill must be three values 0 to 255, got {mask_fill}")
+    if not 0 <= augment["low_res_prob"] <= 1 or not 0 < augment["low_res_factor"] < 1:
+        raise ValueError(
+            "augment.low_res_prob must be in [0, 1] and augment.low_res_factor in (0, 1), got "
+            f"{augment['low_res_prob']} and {augment['low_res_factor']}"
+        )
     is_photometric = augment["photometric"] and not is_clean
     is_flip_enabled = augment["hflip"] and not is_clean
-    if mask_fill is None and not is_photometric and not is_flip_enabled:
+    low_res_prob = 0.0 if is_clean else augment["low_res_prob"]
+    if mask_fill is None and not is_photometric and not is_flip_enabled and low_res_prob == 0:
         return None
     return partial(
         augment_training_frame,
@@ -124,6 +182,8 @@ def build_train_transform(config: dict, is_clean: bool) -> FrameTransform | None
         photometric=(
             v2.RandomPhotometricDistort(p=PHOTOMETRIC_PROBABILITY) if is_photometric else None
         ),
+        low_res_prob=low_res_prob,
+        low_res_factor=augment["low_res_factor"],
         is_flip_enabled=is_flip_enabled,
     )
 

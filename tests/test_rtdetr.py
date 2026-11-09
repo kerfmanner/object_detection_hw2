@@ -11,8 +11,10 @@ import torch
 from torchvision.io import write_jpeg
 from transformers import RTDetrImageProcessor, RTDetrV2Config, RTDetrV2ForObjectDetection
 
+import src.inference.torchvision_detectors
 import src.training.torchvision_loop
 from src.data.annotations import AnnotationTables
+from src.data.augment import shrink_frame
 from src.data.classes import CLASS_NAMES
 from src.data.dataset import VisDroneDataset
 from src.evaluate import METRICS_FILE, RESULTS_PATH, TRAINING_FIELDS, find_run_dir
@@ -356,6 +358,58 @@ def test_lr_scaled_repeat_differs_from_lr_scaled_only_in_the_seed() -> None:
         k: v for k, v in scaled.items() if k not in ("run", "seed")
     }
     check_training_budget(repeat)
+
+
+def test_recipe_step2_low_res_differs_from_recipe_step2_only_in_the_low_resolution_draw() -> None:
+    recipe = load_experiment_config(RTDETR_DIR / "recipe_step2.toml")
+    low_res = load_experiment_config(RTDETR_DIR / "recipe_step2_low_res.toml")
+    assert low_res["run"]["experiment"] == "rtdetr-recipe_step2_low_res"
+    assert low_res["augment"] == recipe["augment"] | {"low_res_prob": 0.25}
+    assert {k: v for k, v in low_res.items() if k not in ("run", "augment")} == {
+        k: v for k, v in recipe.items() if k not in ("run", "augment")
+    }
+    check_training_budget(low_res)
+
+
+def test_shrunk_frames_are_predicted_and_their_boxes_scaled_back(
+    baseline_config: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    shrunk_shapes: list[tuple[int, ...]] = []
+
+    def record_shrink(image: torch.Tensor, factor: float) -> torch.Tensor:
+        shrunk = shrink_frame(image, factor)
+        shrunk_shapes.append(tuple(shrunk.shape))
+        return shrunk
+
+    monkeypatch.setattr(src.inference.torchvision_detectors, "shrink_frame", record_shrink)
+    frame_path = tmp_path / "frame.jpg"
+    write_jpeg(torch.full((3, 48, 64), 128, dtype=torch.uint8), str(frame_path))
+    images = pl.DataFrame({"image_id": ["clip_0000001"], "file_path": [str(frame_path)]})
+    logits = torch.full((1, 1, len(CLASS_NAMES)), -20.0)
+    logits[0, 0, 7] = 2.0
+    outputs = FixedRTDetrOutputs(logits, torch.tensor([[[0.25, 0.25, 0.25, 0.125]]]))
+    model = RTDetrDetector(
+        cast(RTDetrV2ForObjectDetection, outputs),
+        min_size=48,
+        max_size=64,
+        score_thresh=0.001,
+        detections_per_img=1,
+    )
+    torch.save({MODEL_STATE_KEY: model.state_dict()}, tmp_path / "best.pt")
+    full, _ = predict_torchvision_frames(model, tmp_path / "best.pt", images, baseline_config)
+    inference = baseline_config["inference"] | {"input_scale": 0.5, "hflip": True}
+    config = baseline_config | {"inference": inference}
+    shrunk, _ = predict_torchvision_frames(model, tmp_path / "best.pt", images, config)
+    assert shrunk_shapes and set(shrunk_shapes) == {(3, 24, 32)}
+    assert full.select("x", "y", "w", "h").row(0) == pytest.approx((8, 12, 16, 8))
+    assert shrunk.select("x", "y", "w", "h").row(0) == pytest.approx((40, 12, 16, 8))
+    with pytest.raises(ValueError, match="input_scale must be in"):
+        predict_torchvision_frames(
+            model,
+            tmp_path / "best.pt",
+            images,
+            baseline_config | {"inference": inference | {"input_scale": 0.0}},
+        )
 
 
 def test_scaled_learning_rates_keep_the_backbone_ratio(

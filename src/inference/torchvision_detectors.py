@@ -13,6 +13,7 @@ from torchvision.ops import box_iou
 from tqdm.auto import tqdm
 
 from src.data.annotations import BOX_COLUMNS
+from src.data.augment import shrink_frame
 from src.data.boxes import convert_xywh_to_xyxy
 from src.inference.detections import build_prediction_table, mirror_detections
 from src.models.torchvision_labels import (
@@ -80,15 +81,17 @@ def detect_frames(
     warmup_images: int,
     has_background_label: bool,
     is_flipped: bool = False,
+    input_scale: float = 1.0,
 ) -> tuple[pl.DataFrame, float]:
     """Detect objects on every frame of an image table with a torchvision-style detector.
 
     Frames go through the model one at a time. The model is put in eval mode on `device`.
     The time per image covers moving the frame to the device, the uint8 to float conversion,
     the optional horizontal flip, and the forward pass with resizing and post-processing
-    (NMS for torchvision), with the GPU synchronized before and after; decoding the file is
-    not timed, as for YOLO. `warmup_images` untimed passes on the first frame come first.
-    Detections on a flipped frame are mirrored back to the original frame.
+    (NMS for torchvision), with the GPU synchronized before and after; decoding the file and
+    the optional `shrink_frame` are not timed, as for YOLO. `warmup_images` untimed passes on
+    the first frame come first. Detections on a flipped frame are mirrored back, and
+    detections on a shrunk frame are scaled back to the original frame.
 
     Args:
         model: Detector taking a list of float frames and returning `boxes`, `scores`, and
@@ -99,6 +102,7 @@ def detect_frames(
         has_background_label: Whether the model predicts torchvision labels with background
             0, which are shifted back to 0-based class ids; otherwise labels are 0-based.
         is_flipped: Whether every frame is flipped horizontally before detection.
+        input_scale: Linear factor every frame is shrunk by before detection, 1 to keep it.
 
     Returns:
         Predictions with `image_id`, 0-based `class_id`, `score`, and pixel `x`, `y`, `w`,
@@ -111,10 +115,13 @@ def detect_frames(
     frame_detections, seconds = [], []
     with torch.inference_mode():
         warmup_frame = decode_image(file_paths[0], mode=ImageReadMode.RGB)
+        if input_scale != 1:
+            warmup_frame = shrink_frame(warmup_frame, input_scale)
         for _ in range(warmup_images):
             model(convert_frames_to_inputs([warmup_frame], device))
         for file_path in tqdm(file_paths, desc="Predicting frames", unit="frame"):
-            frame = decode_image(file_path, mode=ImageReadMode.RGB)
+            original = decode_image(file_path, mode=ImageReadMode.RGB)
+            frame = original if input_scale == 1 else shrink_frame(original, input_scale)
             if is_cuda:
                 torch.cuda.synchronize()
             started = time.perf_counter()
@@ -129,6 +136,10 @@ def detect_frames(
             converted = convert_torchvision_detections(detections)
             if is_flipped:
                 converted = mirror_detections(converted, frame.shape[-1])
+            if input_scale != 1:
+                (height, width), (shrunk_height, shrunk_width) = original.shape[1:], frame.shape[1:]
+                converted[:, [2, 4]] *= width / shrunk_width
+                converted[:, [3, 5]] *= height / shrunk_height
             frame_detections.append(converted)
     predictions = build_prediction_table(images["image_id"], frame_detections)
     return predictions, 1000 * float(np.mean(seconds))
@@ -141,19 +152,23 @@ def predict_torchvision_frames(
 
     Used for the torchvision families and RT-DETR. The score threshold, NMS IoU, and
     detections per frame of `[inference]` were set in the model by its builder; `hflip`
-    predicts on horizontally flipped frames (`detect_frames`).
+    predicts on horizontally flipped frames and `input_scale` on shrunk frames
+    (`detect_frames`).
 
     Args:
         model: Detector from `build_model` with the run's configuration.
         checkpoint_path: Path of a checkpoint written by the shared training loop.
         images: Image table with `image_id` and absolute `file_path`.
         config: Resolved run configuration with `run.family` and `[inference]`
-            `warmup_images` and `hflip`.
+            `warmup_images`, `hflip`, and `input_scale`.
 
     Returns:
         Predictions with `image_id`, 0-based `class_id`, `score`, and pixel `x`, `y`, `w`,
         `h` (top-left corner), and the mean inference time in ms per image.
     """
+    inference = config["inference"]
+    if not 0 < inference["input_scale"] <= 1:
+        raise ValueError(f"inference.input_scale must be in (0, 1], got {inference['input_scale']}")
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
     model.load_state_dict(checkpoint[MODEL_STATE_KEY])
     device = select_device()
@@ -162,9 +177,10 @@ def predict_torchvision_frames(
         model,
         images,
         device,
-        config["inference"]["warmup_images"],
+        inference["warmup_images"],
         config["run"]["family"] in TORCHVISION_FAMILIES,
-        config["inference"]["hflip"],
+        inference["hflip"],
+        inference["input_scale"],
     )
 
 

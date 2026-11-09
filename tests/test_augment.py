@@ -9,6 +9,7 @@ from src.data.annotations import AnnotationTables
 from src.data.augment import (
     augment_training_frame,
     build_train_transform,
+    downscale_frame,
     draw_input_sizes,
     flip_frame,
     mask_ignored_regions,
@@ -71,7 +72,13 @@ def test_clean_epochs_keep_only_the_masking_of_ignored_regions(rtdetr_config: di
     clean = build_train_transform(config, is_clean=True)
     assert isinstance(augmented, partial) and isinstance(clean, partial)
     assert augmented.keywords["is_flip_enabled"] and augmented.keywords["photometric"]
-    assert clean.keywords == {"mask_fill": FILL, "photometric": None, "is_flip_enabled": False}
+    assert clean.keywords == {
+        "mask_fill": FILL,
+        "photometric": None,
+        "low_res_prob": 0.0,
+        "low_res_factor": 0.5,
+        "is_flip_enabled": False,
+    }
     flip_only = config | {"ignored_regions": config["ignored_regions"] | {"mask": False}}
     assert build_train_transform(flip_only, is_clean=True) is None
     with pytest.raises(ValueError, match="fill must be three values"):
@@ -91,11 +98,57 @@ def test_flip_is_drawn_per_frame_and_keeps_boxes_on_the_object() -> None:
     torch.manual_seed(0)
     lefts = []
     for _ in range(40):
-        augmented, augmented_target = augment_training_frame(image, target, None, None, True)
+        augmented, augmented_target = augment_training_frame(
+            image, target, None, None, 0.0, 0.5, True
+        )
         x1, y1, x2, y2 = augmented_target["boxes"][0].int().tolist()
         assert (augmented[:, y1:y2, x1:x2] == 255).all()
         lefts.append(x1)
     assert set(lefts) == {1, 15}
+
+
+def test_downscaling_shrinks_the_frame_and_keeps_boxes_on_the_object() -> None:
+    image = torch.zeros((3, 40, 80), dtype=torch.uint8)
+    image[:, 8:24, 16:48] = 255
+    target = {
+        "boxes": torch.tensor([[16.0, 8.0, 48.0, 24.0]]),
+        "labels": torch.tensor([4]),
+        "ignored_boxes": torch.tensor([[0.0, 0.0, 80.0, 40.0]]),
+    }
+    shrunk, shrunk_target = downscale_frame(image, target, 0.5)
+    assert shrunk.shape == (3, 20, 40) and shrunk.dtype == torch.uint8
+    assert shrunk_target["boxes"].tolist() == [[8.0, 4.0, 24.0, 12.0]]
+    assert shrunk_target["ignored_boxes"].tolist() == [[0.0, 0.0, 40.0, 20.0]]
+    assert shrunk_target["labels"] is target["labels"]
+    assert (shrunk[:, 5:11, 9:23] == 255).all() and shrunk[:, 14:, :].max() == 0
+
+
+def test_low_resolution_is_drawn_with_its_probability_and_off_in_clean_epochs(
+    rtdetr_config: dict,
+) -> None:
+    image = torch.zeros((3, 40, 80), dtype=torch.uint8)
+    target = {
+        "boxes": torch.tensor([[16.0, 8.0, 48.0, 24.0]]),
+        "labels": torch.tensor([0]),
+        "ignored_boxes": torch.zeros((0, 4)),
+    }
+    torch.manual_seed(0)
+    heights = {
+        augment_training_frame(image, target, None, None, 0.5, 0.5, False)[0].shape[1]
+        for _ in range(40)
+    }
+    assert heights == {20, 40}
+    always = augment_training_frame(image, target, None, None, 1.0, 0.25, False)[0]
+    assert always.shape == (3, 10, 20)
+    config = rtdetr_config | {"augment": rtdetr_config["augment"] | {"low_res_prob": 0.25}}
+    augmented = build_train_transform(config, is_clean=False)
+    assert isinstance(augmented, partial) and augmented.keywords["low_res_prob"] == 0.25
+    assert build_train_transform(config, is_clean=True) is None
+    for invalid in ({"low_res_prob": 1.5}, {"low_res_factor": 1.0}, {"low_res_factor": 0.0}):
+        with pytest.raises(ValueError, match="low_res_prob must be in"):
+            build_train_transform(
+                rtdetr_config | {"augment": rtdetr_config["augment"] | invalid}, is_clean=False
+            )
 
 
 def test_multi_scale_sizes_come_from_the_list_and_scale_the_longer_side_bound() -> None:

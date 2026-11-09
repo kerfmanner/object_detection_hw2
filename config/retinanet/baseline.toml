@@ -42,13 +42,16 @@ detections_per_img = 500  # maximum detections per frame, at most 500 (torchvisi
 topk_candidates = 1000  # highest-scoring (anchor, class) candidates kept per FPN level before NMS (torchvision default)
 warmup_images = 10  # untimed forward passes on the first frame before measuring ms/image
 hflip = false  # predict on horizontally flipped frames and mirror the boxes back: true for the flipped member of a flip TTA fusion (config/postprocess), false predicts the frames as they are
+input_scale = 1.0  # linear factor in (0, 1] every frame is shrunk by (antialiased) before detection, with the boxes scaled back to the original frame; 1.0 predicts the frames as they are, 0.5 gives val frames the half resolution of the 680x382 and 960x540 test frames
 
 [augment]
 # Training augmentation of the shared loop, a subset of the official RT-DETRv2 recipe (https://github.com/lyuwenyu/RT-DETR/blob/main/rtdetrv2_pytorch/configs/rtdetrv2/include/dataloader.yml); all off in the baseline, which trains on unmodified frames
 hflip = false  # flip each training frame and its boxes horizontally with probability 0.5 (recipe RandomHorizontalFlip)
 photometric = false  # torchvision RandomPhotometricDistort with p 0.5 and its default ranges: brightness 0.875 to 1.125, contrast and saturation 0.5 to 1.5, hue -0.05 to 0.05, and channel permutation, each applied with probability 0.5 (recipe p 0.5)
 train_scales = []  # multi-scale training: shorter frame sides in px, one drawn uniformly per batch, with max_size scaled by the same factor; repeated values are drawn more often; empty trains every batch at min_size
-clean_epochs = 0  # last epochs trained without hflip, photometric, and train_scales, integer from 0 to epochs - 1 (the recipe switches them off for its last epoch of 72)
+low_res_prob = 0.0  # probability in [0, 1] of shrinking a training frame and its boxes by low_res_factor (antialiased) before the detector resizes it to its input size, so that the frame keeps its scale and loses detail (Albumentations Downscale, https://github.com/albumentations-team/albumentations/blob/1.4.24/albumentations/augmentations/transforms.py#L3387); 0.0 keeps every frame at full resolution
+low_res_factor = 0.5  # linear scale factor in (0, 1) of low_res_prob; 0.5 halves both sides, as from 1360x765 to the 680x382 test frames
+clean_epochs = 0  # last epochs trained without hflip, photometric, low_res_prob, and train_scales, integer from 0 to epochs - 1 (the recipe switches them off for its last epoch of 72)
 
 [ema]
 # Exponential moving average of the weights (ModelEMA of the official RT-DETRv2 code, https://github.com/lyuwenyu/RT-DETR/blob/main/rtdetrv2_pytorch/src/optim/ema.py); when enabled, the per-epoch monitoring, best.pt, and last.pt hold the averaged weights

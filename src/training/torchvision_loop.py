@@ -724,7 +724,9 @@ def train_torchvision_detector(
     train_dataset = VisDroneDataset(
         tables, "train", train_step, build_train_transform(config, is_clean=False)
     )
-    has_clean_dataset = augment["clean_epochs"] > 0 and (augment["hflip"] or augment["photometric"])
+    has_clean_dataset = augment["clean_epochs"] > 0 and (
+        augment["hflip"] or augment["photometric"] or augment["low_res_prob"] > 0
+    )
     clean_dataset = (
         VisDroneDataset(tables, "train", train_step, build_train_transform(config, is_clean=True))
         if has_clean_dataset

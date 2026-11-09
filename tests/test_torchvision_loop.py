@@ -375,7 +375,14 @@ def test_augmented_epochs_vary_frames_and_sizes_and_the_clean_epoch_does_not(
 ) -> None:
     tiny_config = load_tiny_config(FASTER_RCNN_BASELINE)
     ignored: dict = tiny_config["ignored_regions"]
-    augment = {"hflip": True, "photometric": True, "train_scales": [48, 80], "clean_epochs": 1}
+    augment = {
+        "hflip": True,
+        "photometric": True,
+        "train_scales": [48, 80],
+        "low_res_prob": 0.5,
+        "low_res_factor": 0.5,
+        "clean_epochs": 1,
+    }
     config = tiny_config | {
         "epochs": 2,
         "batch_size": 4,
@@ -405,7 +412,14 @@ def test_augmented_epochs_vary_frames_and_sizes_and_the_clean_epoch_does_not(
     wandb_run.finish()
     augmented, clean = (transform.keywords for transform in transforms)
     assert augmented["is_flip_enabled"] and augmented["photometric"] is not None
-    assert clean == {"mask_fill": ignored["fill"], "photometric": None, "is_flip_enabled": False}
+    assert augmented["low_res_prob"] == 0.5
+    assert clean == {
+        "mask_fill": ignored["fill"],
+        "photometric": None,
+        "low_res_prob": 0.0,
+        "low_res_factor": 0.5,
+        "is_flip_enabled": False,
+    }
     augmented_sizes, clean_sizes = sizes
     assert augmented_sizes is not None and set(augmented_sizes) <= {(48, 72), (80, 120)}
     assert clean_sizes is None
