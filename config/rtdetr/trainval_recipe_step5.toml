@@ -1,0 +1,9 @@
+# Trained on train and val, val not held out: augment_recipe for its best epoch 2 of 7 on the 63 clips, step 5 frames twice instead of step 2 frames once (trainval_recipe_step2); on val the two schedules are within seed noise (augment_recipe 0.3373, recipe_step2 0.3402), and this is the train and val counterpart of the ensemble member rtdetr-augment_recipe
+train_splits = ["train", "val"]  # baseline ["train"]
+epochs = 2  # augment_recipe 7; its monitoring peaked at epoch 2 (0.3171, 0.3385, then 0.3359 to 0.3288); with a constant LR, these 2 epochs train with the same LR as augment_recipe's first 2
+
+[augment]
+hflip = true  # as augment_recipe
+photometric = true  # as augment_recipe
+train_scales = [832, 896, 960, 1024, 1024, 1024, 1088, 1152, 1216]  # as augment_recipe
+clean_epochs = 0  # augment_recipe 1; its clean epoch was epoch 7, after the best epoch

@@ -1,0 +1,10 @@
+# Trained on train and val, val not held out, so its val metrics are not comparable with other runs: M1 (recipe_step2) for its best epoch 1 of 3 on the 63 clips instead of 56, the same augmented first epoch at step 2 with 10% more frames; checked on the public LB against rtdetr-infer_recipe_step2_det500 (0.2722) through infer_trainval_recipe_step2_det500
+train_splits = ["train", "val"]  # baseline ["train"]
+train_frames = "train_final"  # as recipe_step2
+epochs = 1  # recipe_step2 3; its monitoring peaked at epoch 1 (0.3414, then 0.3104 and 0.3109), and seed 7 too (0.3417); with a constant LR, epoch 1 trains with the same LR as recipe_step2's epoch 1
+
+[augment]
+hflip = true  # as recipe_step2
+photometric = true  # as recipe_step2
+train_scales = [832, 896, 960, 1024, 1024, 1024, 1088, 1152, 1216]  # as recipe_step2
+clean_epochs = 0  # recipe_step2 1; its clean epoch was epoch 3, after the best epoch

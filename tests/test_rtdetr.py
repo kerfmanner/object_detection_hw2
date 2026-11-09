@@ -412,6 +412,34 @@ def test_shrunk_frames_are_predicted_and_their_boxes_scaled_back(
         )
 
 
+@pytest.mark.parametrize(
+    ("name", "reference", "changed"),
+    [
+        ("trainval_recipe_step2", "recipe_step2", {"epochs": 1, "clean_epochs": 0}),
+        ("trainval_recipe_step5", "augment_recipe", {"epochs": 2, "clean_epochs": 0}),
+    ],
+)
+def test_train_and_val_configs_keep_the_reference_up_to_its_best_epoch(
+    name: str, reference: str, changed: dict
+) -> None:
+    config = load_experiment_config(RTDETR_DIR / f"{name}.toml")
+    source = load_experiment_config(RTDETR_DIR / f"{reference}.toml")
+    assert config["train_splits"] == ["train", "val"] and source["train_splits"] == ["train"]
+    assert config["epochs"] == changed["epochs"]
+    assert config["augment"] == source["augment"] | {"clean_epochs": changed["clean_epochs"]}
+    unchanged = ("run", "train_splits", "epochs", "augment")
+    assert {k: v for k, v in config.items() if k not in unchanged} == {
+        k: v for k, v in source.items() if k not in unchanged
+    }
+    check_training_budget(config)
+    repeat = load_experiment_config(RTDETR_DIR / "trainval_recipe_step2_repeat.toml")
+    trainval = load_experiment_config(RTDETR_DIR / "trainval_recipe_step2.toml")
+    assert repeat["run"]["experiment"] == "rtdetr-trainval_recipe_step2_repeat-s7"
+    assert {k: v for k, v in repeat.items() if k not in ("run", "seed")} == {
+        k: v for k, v in trainval.items() if k not in ("run", "seed")
+    }
+
+
 def test_scaled_learning_rates_keep_the_backbone_ratio(
     baseline_config: dict, baseline_model: RTDetrDetector
 ) -> None:

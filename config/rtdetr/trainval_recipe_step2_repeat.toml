@@ -1,0 +1,11 @@
+# Trained on train and val, val not held out: trainval_recipe_step2 with seed 7, the train and val counterpart of the ensemble member rtdetr-recipe_step2_repeat-s7 (best epoch 1 of 3, monitoring 0.3417)
+seed = 7  # trainval_recipe_step2 42
+train_splits = ["train", "val"]  # as trainval_recipe_step2
+train_frames = "train_final"  # as trainval_recipe_step2
+epochs = 1  # as trainval_recipe_step2
+
+[augment]
+hflip = true  # as trainval_recipe_step2
+photometric = true  # as trainval_recipe_step2
+train_scales = [832, 896, 960, 1024, 1024, 1024, 1088, 1152, 1216]  # as trainval_recipe_step2
+clean_epochs = 0  # as trainval_recipe_step2

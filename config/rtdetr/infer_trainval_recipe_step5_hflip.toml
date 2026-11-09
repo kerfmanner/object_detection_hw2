@@ -1,0 +1,5 @@
+# Inference only, on rtdetr-trainval_recipe_step5, which trained with horizontal flips: predicts flipped frames and mirrors the boxes back, the train and val counterpart of the flip member rtdetr-infer_recipe_hflip
+source = "rtdetr-trainval_recipe_step5"  # trained run whose best.pt predicts
+
+[inference]
+hflip = true  # baseline false

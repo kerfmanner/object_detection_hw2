@@ -1,0 +1,3 @@
+# Trained on train and val, val not held out: the baseline for 2 epochs on the 63 clips, standing in for the ensemble member faster_rcnn-lr_cosine, whose best epoch 2 of 10 trained at a cosine LR still 0.90 to 1.0 times the constant baseline LR; the baseline itself also peaked at epoch 2 (0.3024)
+train_splits = ["train", "val"]  # baseline ["train"]
+epochs = 2  # baseline 10; with a constant LR, these 2 epochs train with the same LR as the baseline's first 2

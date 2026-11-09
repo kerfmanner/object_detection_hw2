@@ -28,6 +28,7 @@ from src.models.faster_rcnn import (
     set_box_regression_loss,
 )
 from src.training.experiment import load_experiment_config
+from src.training.torchvision_loop import check_training_budget
 from tests.test_smoke import FASTER_RCNN_BASELINE
 
 TINY_INPUT = {"min_size": 64, "max_size": 96}
@@ -245,3 +246,25 @@ def test_proposal_table_ranks_the_proposals_of_every_frame(
         rows = proposals.filter(pl.col("image_id") == image_id)
         assert rows["rank"].to_list() == list(range(len(expected)))
         assert np.allclose(rows.select("x", "y", "w", "h").to_numpy(), expected)
+
+
+@pytest.mark.parametrize(
+    ("name", "reference"),
+    [("trainval_giou_loss", "giou_loss"), ("trainval_baseline_2ep", "baseline")],
+)
+def test_train_and_val_configs_stop_at_the_best_epoch_of_their_reference(
+    name: str, reference: str
+) -> None:
+    config = load_experiment_config(FASTER_RCNN_BASELINE.parent / f"{name}.toml")
+    source = load_experiment_config(FASTER_RCNN_BASELINE.parent / f"{reference}.toml")
+    assert config["run"]["experiment"] == f"faster_rcnn-{name}"
+    assert (config["train_splits"], config["epochs"], config["schedule"]) == (
+        ["train", "val"],
+        2,
+        "constant",
+    )
+    unchanged = ("run", "train_splits", "epochs")
+    assert {k: v for k, v in config.items() if k not in unchanged} == {
+        k: v for k, v in source.items() if k not in unchanged
+    }
+    check_training_budget(config)

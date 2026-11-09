@@ -14,6 +14,7 @@ TomlValue = str | int | float | bool | list | dict
 REPO_ROOT = Path(__file__).resolve().parents[2]
 KAGGLE_SETTING = "KAGGLE_KERNEL_RUN_TYPE"
 TRAIN_FRAME_STEPS = ("train_tuning", "train_final")
+TRAIN_SPLIT_CHOICES = (["train"], ["train", "val"])
 
 
 def merge_config(baseline: dict, override: dict, path: str = "") -> dict:

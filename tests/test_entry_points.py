@@ -36,6 +36,7 @@ from tests.test_experiment import BASELINE_TOML
 from tests.test_smoke import FASTER_RCNN_BASELINE, RETINANET_BASELINE
 
 TRAINING_ONLY_FIELDS_ADDED_WITH_RTDETR = ("amp_dtype", "grad_clip_norm")
+TRAINING_ONLY_FIELDS_ADDED_WITH_TRAIN_VAL = ("train_splits",)
 TRAINING_ONLY_ROI_HEADS_FIELDS_ADDED_WITH_GIOU = ("box_loss", "giou_loss_weight")
 TRAINING_ONLY_TABLES_ADDED_WITH_FOCAL_LOSS = ("focal_loss",)
 TRAINING_ONLY_TABLES_ADDED_WITH_AUGMENTATION = ("augment", "ignored_regions")
@@ -201,6 +202,7 @@ def test_runs_resolved_before_training_only_fields_were_added_still_predict_and_
     resolved = baseline | {"min_size": 64, "max_size": 96}
     removed = (
         TRAINING_ONLY_FIELDS_ADDED_WITH_RTDETR
+        + TRAINING_ONLY_FIELDS_ADDED_WITH_TRAIN_VAL
         + TRAINING_ONLY_TABLES_ADDED_WITH_FOCAL_LOSS
         + TRAINING_ONLY_TABLES_ADDED_WITH_AUGMENTATION
     )

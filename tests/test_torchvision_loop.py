@@ -8,7 +8,7 @@ import numpy as np
 import polars as pl
 import pytest
 import torch
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import ConcatDataset, DataLoader, Subset
 from torchvision.io import write_jpeg
 from torchvision.models.detection.transform import GeneralizedRCNNTransform
 
@@ -224,6 +224,10 @@ def test_full_run_needs_epochs_batch_size_and_lr(baseline_path: Path) -> None:
     assert timing["freeze_batchnorm"]
     with pytest.raises(ValueError, match="train_frames must be"):
         check_training_budget(timing | {"train_frames": "val_reporting"})
+    check_training_budget(baseline | {"train_splits": ["train", "val"]})
+    for train_splits in (["val"], ["train", "test"], "train"):
+        with pytest.raises(ValueError, match="train_splits must be one of"):
+            check_training_budget(baseline | {"train_splits": train_splits})
     with pytest.raises(ValueError, match="ema.decay must be.*ema.warmup_steps must be"):
         check_training_budget(
             baseline | {"ema": {"enabled": True, "decay": 1.0, "warmup_steps": 0}}
@@ -426,6 +430,46 @@ def test_augmented_epochs_vary_frames_and_sizes_and_the_clean_epoch_does_not(
     transform = model.transform
     assert isinstance(transform, GeneralizedRCNNTransform)
     assert (transform.min_size, transform.max_size) == ((64,), 96)
+
+
+def test_training_on_val_concatenates_both_splits_and_saves_the_last_epoch(
+    synthetic_root: Path, synthetic_data_config: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tiny_config = load_tiny_config(FASTER_RCNN_BASELINE)
+    config = tiny_config | {
+        "epochs": 2,
+        "batch_size": 4,
+        "lr": 0.001,
+        "num_workers": 0,
+        "train_splits": ["train", "val"],
+    }
+    datasets: list[Any] = []
+    train_epoch = src.training.torchvision_loop.train_one_epoch
+
+    def record_epoch(*args: Any) -> tuple[dict[str, float], int]:
+        datasets.append(args[1].dataset)
+        return train_epoch(*args)
+
+    monkeypatch.setattr(src.training.torchvision_loop, "train_one_epoch", record_epoch)
+    model = build_model(config)
+    wandb_run = init_wandb(config, WANDB_SETTINGS, run_dir=None)
+    run_dir = synthetic_root.parent / "train_and_val_run"
+    run_dir.mkdir()
+    train_torchvision_detector(model, config, synthetic_root, run_dir, wandb_run)
+    wandb_run.finish()
+    dataset = datasets[0]
+    assert isinstance(dataset, ConcatDataset)
+    assert [part.images["split"].unique().to_list() for part in dataset.datasets] == [
+        ["train"],
+        ["val"],
+    ]
+    assert all(len(part) > 0 for part in dataset.datasets)
+    training = json.loads((run_dir / METRICS_FILE).read_text())["training"]
+    assert training["best_epoch"] == 2 and training["val_frame_step"] is None
+    assert not any(key.startswith("val/") for record in training["history"] for key in record)
+    best = torch.load(run_dir / BEST_CHECKPOINT, weights_only=True)
+    last = torch.load(run_dir / LAST_CHECKPOINT, weights_only=True)
+    assert best["epoch"] == last["epoch"] == 2
 
 
 def test_ema_decay_ramps_up_from_zero_to_the_configured_decay() -> None:

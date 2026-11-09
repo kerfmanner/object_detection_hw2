@@ -1,0 +1,13 @@
+# ens_rtdetr4_frcnn2_yolo2_smooth with every RT-DETR and Faster R-CNN member replaced by its counterpart trained on train and val (same recipe, best epoch of the val run, 63 clips); the YOLO members stay train only; val is not held out for six of the eight members, so its val mAP is not comparable, and the public LB is the only check (0.2981 for ens_rtdetr4_frcnn2_yolo2_smooth)
+members = ["rtdetr-trainval_recipe_step5", "rtdetr-infer_trainval_recipe_step5_hflip", "rtdetr-infer_trainval_recipe_step2_det500", "rtdetr-trainval_recipe_step2_repeat-s7", "faster_rcnn-trainval_giou_loss", "faster_rcnn-trainval_baseline_2ep", "yolo-baseline", "yolo-imgsz_1280"]  # in the member order of ens_rtdetr4_frcnn2_yolo2_smooth
+weights = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]  # as ens_rtdetr4_frcnn2_yolo2_smooth
+fusion = "wbf"  # as ens_rtdetr4_frcnn2_yolo2_smooth
+iou_thresh = 0.65  # as ens_rtdetr4_frcnn2_yolo2_smooth
+
+[temporal]
+enabled = true  # as ens_rtdetr4_frcnn2_yolo2_smooth
+link_iou = 0.5  # as ens_rtdetr4_frcnn2_yolo2_smooth
+min_score = 0.0  # as ens_rtdetr4_frcnn2_yolo2_smooth
+weight = 0.5  # as ens_rtdetr4_frcnn2_yolo2_smooth
+statistic = "max"  # as ens_rtdetr4_frcnn2_yolo2_smooth
+should_smooth_boxes = true  # as ens_rtdetr4_frcnn2_yolo2_smooth

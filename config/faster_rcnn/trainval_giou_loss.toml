@@ -1,0 +1,6 @@
+# Trained on train and val, val not held out: giou_loss for its best epoch 2 of 5 on the 63 clips, the train and val counterpart of the ensemble member faster_rcnn-giou_loss
+train_splits = ["train", "val"]  # baseline ["train"]
+epochs = 2  # giou_loss 5; its monitoring peaked at epoch 2 (0.2964, 0.3068, then 0.2978 to 0.2928); with a constant LR, these 2 epochs train with the same LR as giou_loss's first 2
+
+[roi_heads]
+box_loss = "giou"  # as giou_loss
