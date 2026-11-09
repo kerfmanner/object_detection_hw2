@@ -5,6 +5,7 @@ from matplotlib.patches import Rectangle
 
 from src.visualization.plots import (
     plot_class_histograms,
+    plot_embedding_panels,
     plot_grouped_bars,
     plot_training_history,
 )
@@ -61,4 +62,27 @@ def test_training_history_uses_the_given_x_column() -> None:
     fig = plot_training_history(histories, {"m": "mAP"}, "History", x="hours", xlabel="Hours")
     assert np.asarray(fig.axes[0].lines[0].get_xdata()).tolist() == [0.5, 1.0]
     assert fig.axes[0].get_xlabel() == "Hours"
+    plt.close(fig)
+
+
+def test_embedding_panels_draw_only_the_labels_of_their_palette() -> None:
+    table = pl.DataFrame(
+        {
+            "embedding_x": [0.0, 1.0, 2.0, 3.0],
+            "embedding_y": [0.0, 1.0, 0.0, 1.0],
+            "category": ["correct", "background", "ignored", "correct"],
+            "size": ["small", "small", "large", "large"],
+        }
+    )
+    fig = plot_embedding_panels(
+        table,
+        [
+            ("category", {"correct": "#00ff00", "background": "#999999"}, "By category"),
+            ("size", {"small": "#0000ff", "large": "#000000"}, "By size"),
+        ],
+        "embeddings",
+    )
+    counts = [sum(len(np.asarray(c.get_offsets())) for c in ax.collections) for ax in fig.axes]
+    assert counts == [3, 4]
+    assert [ax.get_title() for ax in fig.axes] == ["By category", "By size"]
     plt.close(fig)

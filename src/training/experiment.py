@@ -26,14 +26,14 @@ def load_run_config(run_dir: Path) -> dict:
 
     Args:
         run_dir: Run directory with the resolved `config.toml`, whose `run.baseline` names
-            the family baseline.
+            the family baseline, relative to the repository root or absolute.
 
     Returns:
         The resolved configuration with `clip_split` and, for detector families, a complete
         `[inference]` table.
     """
     config = tomllib.loads((run_dir / CONFIG_FILE).read_text())
-    baseline = tomllib.loads(Path(config["run"]["baseline"]).read_text())
+    baseline = tomllib.loads((REPO_ROOT / config["run"]["baseline"]).read_text())
     resolved = {"clip_split": baseline["clip_split"]} | config
     if "inference" in baseline:
         resolved["inference"] = baseline["inference"] | config["inference"]

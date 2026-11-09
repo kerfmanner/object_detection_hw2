@@ -1,10 +1,14 @@
 import re
+from typing import NamedTuple
 
 import numpy as np
 import polars as pl
 import torch
 from torchvision.ops import box_convert
 from transformers import RTDetrV2ForObjectDetection
+from transformers.models.rt_detr_v2.modeling_rt_detr_v2 import (
+    RTDetrV2MultiscaleDeformableAttention,
+)
 
 from src.data.classes import CLASS_NAMES
 
@@ -396,5 +400,179 @@ def predict_query_boxes(model: RTDetrDetector, frame: torch.Tensor) -> pl.DataFr
             "y": xyxy[:, 1],
             "w": xyxy[:, 2] - xyxy[:, 0],
             "h": xyxy[:, 3] - xyxy[:, 1],
+        }
+    )
+
+
+class QueryInternals(NamedTuple):
+    """Decoder internals of RT-DETRv2 for the object queries of one frame.
+
+    Attributes:
+        queries: One row per query in query order with `query` (index), best `class_id`,
+            its sigmoid `score`, and pixel `x`, `y`, `w`, `h` of the final box in the
+            original frame, clipped to it.
+        embeddings: Array (queries, d_model) of the last decoder layer output per query.
+        layer_scores: Array (layers, queries) of the best sigmoid class score per layer.
+        layer_boxes: Array (layers, queries, 4) of the box `x, y, w, h` in original px
+            after each decoder layer, not clipped.
+        sampling_points: Array (layers, queries, heads, levels, points, 2) of the
+            cross-attention sampling locations `x, y` in original px, not clipped.
+        attention_weights: Array (layers, queries, heads, levels, points) of the attention
+            weights of the sampling locations; per head they sum to 1 over levels and points.
+        level_strides: Feature stride in px at the model input of each level.
+    """
+
+    queries: pl.DataFrame
+    embeddings: np.ndarray
+    layer_scores: np.ndarray
+    layer_boxes: np.ndarray
+    sampling_points: np.ndarray
+    attention_weights: np.ndarray
+    level_strides: list[int]
+
+
+def compute_sampling_locations(
+    attention: RTDetrV2MultiscaleDeformableAttention, kwargs: dict[str, torch.Tensor | None]
+) -> torch.Tensor:
+    """Recompute the sampling locations of one RT-DETRv2 deformable cross-attention call.
+
+    Repeats the 4-coordinate reference branch of
+    `RTDetrV2MultiscaleDeformableAttention.forward` in Hugging Face `transformers`
+    (https://github.com/huggingface/transformers/blob/main/src/transformers/models/rt_detr_v2/modeling_rt_detr_v2.py),
+    which uses the locations without returning them.
+
+    Args:
+        attention: The cross-attention (`encoder_attn`) of a decoder layer.
+        kwargs: Keyword arguments of its call with `hidden_states`, `position_embeddings`,
+            and `reference_points` (batch, queries, 1, 4) as `cx, cy, w, h` in [0, 1].
+
+    Returns:
+        Tensor (batch, queries, heads, levels * points, 2) of `x, y` in [0, 1] of the padded
+        input.
+    """
+    hidden_states, position_embeddings = kwargs["hidden_states"], kwargs["position_embeddings"]
+    reference_points = kwargs["reference_points"]
+    if hidden_states is None or reference_points is None:
+        raise ValueError("The cross-attention call needs hidden_states and reference_points")
+    if position_embeddings is not None:
+        hidden_states = hidden_states + position_embeddings
+    batch_size, num_queries, _ = hidden_states.shape
+    offsets = attention.sampling_offsets(hidden_states).view(
+        batch_size, num_queries, attention.n_heads, attention.n_levels * attention.n_points, 2
+    )
+    points_scale = attention.n_points_scale.to(dtype=hidden_states.dtype).unsqueeze(-1)
+    offset = offsets * points_scale * reference_points[:, :, None, :, 2:] * attention.offset_scale
+    return reference_points[:, :, None, :, :2] + offset
+
+
+def predict_query_internals(model: RTDetrDetector, frame: torch.Tensor) -> QueryInternals:
+    """Predict one frame and record the embeddings, boxes, and cross-attention of every query.
+
+    Forward hooks on the deformable cross-attention of each decoder layer record its
+    attention weights and recompute its sampling locations (`compute_sampling_locations`).
+    Coordinates are converted from the padded input to the original frame.
+
+    Args:
+        model: Detector from `build_rtdetr` in eval mode.
+        frame: float tensor of shape (3, height, width) with values in [0, 1], on the
+            model's device.
+
+    Returns:
+        The decoder internals of all queries of the frame.
+    """
+    height, width = frame.shape[-2], frame.shape[-1]
+    recorded: list[tuple[torch.Tensor, torch.Tensor]] = []
+
+    def record_cross_attention(
+        attention: RTDetrV2MultiscaleDeformableAttention,
+        args: tuple,
+        kwargs: dict[str, torch.Tensor | None],
+        output: tuple[torch.Tensor, torch.Tensor],
+    ) -> None:
+        recorded.append((compute_sampling_locations(attention, kwargs)[0], output[1][0]))
+
+    handles = [
+        attention.register_forward_hook(record_cross_attention, with_kwargs=True)
+        for attention in model.detector.model.decoder.modules()
+        if isinstance(attention, RTDetrV2MultiscaleDeformableAttention)
+    ]
+    try:
+        with torch.inference_mode():
+            pixel_values, [resized_size] = resize_and_pad_frames(
+                [frame], model.min_size, model.max_size
+            )
+            outputs = model.detector(pixel_values=pixel_values)
+    finally:
+        for handle in handles:
+            handle.remove()
+    padded_size = (pixel_values.shape[-2], pixel_values.shape[-1])
+    to_pixels = 1 / compute_canvas_scales((height, width), resized_size, padded_size).numpy()
+    scores, labels = outputs.logits[0].float().sigmoid().max(dim=-1)
+    final_xyxy = box_convert(outputs.pred_boxes[0].float(), "cxcywh", "xyxy").cpu().numpy()
+    final_xyxy = (final_xyxy * to_pixels).clip(0, [width, height, width, height])
+    layer_xywh = box_convert(outputs.intermediate_reference_points[0].float(), "cxcywh", "xywh")
+    config = model.detector.config
+    num_layers, num_queries = len(recorded), outputs.logits.shape[1]
+    locations = torch.stack([locations for locations, _ in recorded]).float().cpu().numpy()
+    weights = torch.stack([weights for _, weights in recorded]).float().cpu().numpy()
+    point_shape = (num_layers, num_queries, config.decoder_attention_heads)
+    point_shape += (config.decoder_n_levels, config.decoder_n_points)
+    return QueryInternals(
+        queries=pl.DataFrame(
+            {
+                "query": np.arange(num_queries),
+                "class_id": labels.cpu().numpy().astype(np.int64),
+                "score": scores.cpu().double().numpy(),
+                "x": final_xyxy[:, 0].astype(np.float64),
+                "y": final_xyxy[:, 1].astype(np.float64),
+                "w": (final_xyxy[:, 2] - final_xyxy[:, 0]).astype(np.float64),
+                "h": (final_xyxy[:, 3] - final_xyxy[:, 1]).astype(np.float64),
+            }
+        ),
+        embeddings=outputs.last_hidden_state[0].float().cpu().numpy(),
+        layer_scores=outputs.intermediate_logits[0].float().sigmoid().amax(-1).cpu().numpy(),
+        layer_boxes=layer_xywh.cpu().numpy() * to_pixels,
+        sampling_points=locations.reshape(*point_shape, 2) * to_pixels[:2],
+        attention_weights=weights.reshape(point_shape),
+        level_strides=list(config.feat_strides),
+    )
+
+
+def summarize_query_attention(internals: QueryInternals, query_ids: list[int]) -> pl.DataFrame:
+    """Describe how the cross-attention of each decoder layer spreads around the final box.
+
+    Statistics weight every sampling location by its attention weight and average the heads.
+
+    Args:
+        internals: Result of `predict_query_internals`.
+        query_ids: Queries to describe.
+
+    Returns:
+        One row per query and decoder layer with `query`, `layer` (from 0), `inside_share`
+        (attention on locations inside the final box), `spread` (weighted root mean square
+        distance of the locations from the box center divided by the square root of the box
+        area), and `level_share_<stride>` (attention on each feature level).
+    """
+    index = np.asarray(query_ids, dtype=np.int64)
+    boxes = internals.queries[index].select("x", "y", "w", "h").to_numpy()
+    points = internals.sampling_points[:, index]
+    weights = internals.attention_weights[:, index]
+    num_layers, num_heads = weights.shape[0], weights.shape[2]
+    corner = boxes[None, :, None, None, None, :2]
+    size = boxes[None, :, None, None, None, 2:]
+    is_inside = ((points >= corner) & (points <= corner + size)).all(-1)
+    squared_distance = ((points - corner - size / 2) ** 2).sum(-1)
+    spread = np.sqrt((weights * squared_distance).sum((2, 3, 4)) / num_heads)
+    level_share = weights.sum(-1).mean(2)
+    return pl.DataFrame(
+        {
+            "query": np.tile(index, num_layers),
+            "layer": np.repeat(np.arange(num_layers), len(index)),
+            "inside_share": ((weights * is_inside).sum((2, 3, 4)) / num_heads).ravel(),
+            "spread": (spread / np.sqrt(boxes[:, 2] * boxes[:, 3]).clip(min=1e-6)).ravel(),
+            **{
+                f"level_share_{stride}": level_share[..., level].ravel()
+                for level, stride in enumerate(internals.level_strides)
+            },
         }
     )

@@ -113,3 +113,39 @@ def plot_grouped_bars(
     ax.set(xlabel=xlabel, ylabel=ylabel, title=title)
     fig.tight_layout()
     return fig
+
+
+def plot_embedding_panels(
+    table: pl.DataFrame, panels: list[tuple[str, dict[str, str], str]], title: str
+) -> Figure:
+    """Scatter the same 2D embedding once per labelling, side by side.
+
+    Args:
+        table: One row per point with `embedding_x`, `embedding_y`, and the label columns.
+        panels: Per panel, the label column, the color of each label in legend order, and
+            the panel title; points with other labels are not drawn.
+        title: Figure title.
+
+    Returns:
+        Figure with one axes per panel.
+    """
+    fig, axes = plt.subplots(1, len(panels), figsize=(6 * len(panels), 6), squeeze=False)
+    for ax, (column, palette, panel_title) in zip(axes[0], panels, strict=True):
+        shown = table.filter(pl.col(column).is_in(list(palette)))
+        sns.scatterplot(
+            shown.select("embedding_x", "embedding_y", column).to_dict(as_series=False),
+            x="embedding_x",
+            y="embedding_y",
+            hue=column,
+            hue_order=list(palette),
+            palette=palette,
+            s=6,
+            linewidth=0,
+            alpha=0.6,
+            ax=ax,
+        )
+        ax.set(xticks=[], yticks=[], xlabel="", ylabel="", title=panel_title)
+        ax.legend(markerscale=2.5, fontsize=8, loc="best")
+    fig.suptitle(title)
+    fig.tight_layout()
+    return fig

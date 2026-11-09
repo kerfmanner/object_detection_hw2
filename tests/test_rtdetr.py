@@ -8,6 +8,7 @@ import numpy as np
 import polars as pl
 import pytest
 import torch
+import transformers.models.rt_detr_v2.modeling_rt_detr_v2 as hf_rtdetr
 from torchvision.io import write_jpeg
 from transformers import RTDetrImageProcessor, RTDetrV2Config, RTDetrV2ForObjectDetection
 
@@ -22,6 +23,7 @@ from src.evaluation.coco_metrics import PREDICTION_COLUMNS, validate_predictions
 from src.inference.torchvision_detectors import MODEL_STATE_KEY, predict_torchvision_frames
 from src.models.registry import build_model
 from src.models.rtdetr import (
+    QueryInternals,
     RTDetrDetector,
     build_rtdetr,
     compute_input_size,
@@ -30,7 +32,9 @@ from src.models.rtdetr import (
     freeze_backbone_stages,
     group_rtdetr_losses,
     predict_query_boxes,
+    predict_query_internals,
     resize_and_pad_frames,
+    summarize_query_attention,
 )
 from src.predict import INFERENCE_CONFIG_KEYS
 from src.training.experiment import init_wandb, load_experiment_config, merge_config
@@ -658,3 +662,82 @@ def test_fold_configs_train_the_final_recipe_on_the_other_folds(fold: int) -> No
         k: v for k, v in final.items() if k not in unchanged
     }
     check_training_budget(config)
+
+
+def test_query_internals_record_the_sampling_locations_the_decoder_uses(
+    tiny_model: RTDetrDetector, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tiny_model.eval()
+    frame = torch.rand(3, 60, 100)
+    used_locations = []
+    deformable_attention = hf_rtdetr.multi_scale_deformable_attention_v2
+
+    def record_locations(
+        value: torch.Tensor,
+        spatial_shapes: torch.Tensor,
+        locations: torch.Tensor,
+        weights: torch.Tensor,
+        points_list: list[int],
+        method: str,
+    ) -> torch.Tensor:
+        used_locations.append(locations[0].clone())
+        return deformable_attention(value, spatial_shapes, locations, weights, points_list, method)
+
+    monkeypatch.setattr(hf_rtdetr, "multi_scale_deformable_attention_v2", record_locations)
+    internals = predict_query_internals(tiny_model, frame)
+    config = tiny_model.detector.config
+    layers, queries = config.decoder_layers, config.num_queries
+    heads, levels, points = config.decoder_attention_heads, config.decoder_n_levels, 4
+    assert internals.queries["query"].to_list() == list(range(queries))
+    assert internals.embeddings.shape == (queries, config.d_model)
+    assert internals.layer_scores.shape == (layers, queries)
+    assert internals.layer_boxes.shape == (layers, queries, 4)
+    assert internals.sampling_points.shape == (layers, queries, heads, levels, points, 2)
+    assert np.allclose(internals.attention_weights.sum((-1, -2)), 1.0, atol=1e-5)
+    assert internals.level_strides == list(config.feat_strides)
+    assert internals.queries.sort("score", descending=True)["score"].to_list() == pytest.approx(
+        predict_query_boxes(tiny_model, frame)["score"].to_list(), abs=1e-6
+    )
+    assert np.allclose(internals.layer_scores[-1], internals.queries["score"].to_numpy(), atol=1e-6)
+    pixel_values, [(resized_height, resized_width)] = resize_and_pad_frames(
+        [frame], tiny_model.min_size, tiny_model.max_size
+    )
+    to_pixels = np.array(
+        [
+            pixel_values.shape[-1] * 100 / resized_width,
+            pixel_values.shape[-2] * 60 / resized_height,
+        ]
+    )
+    expected = torch.stack(used_locations[:layers]).numpy().reshape(internals.sampling_points.shape)
+    assert np.allclose(internals.sampling_points, expected * to_pixels, atol=1e-3)
+    final = internals.layer_boxes[-1]
+    inside = (final[:, 0] >= 0) & (final[:, 0] + final[:, 2] <= 100)
+    assert np.allclose(
+        final[inside, 2], internals.queries.filter(pl.Series(inside))["w"].to_numpy(), atol=1e-3
+    )
+
+
+def test_attention_summary_weights_locations_by_attention() -> None:
+    points = np.zeros((1, 1, 2, 2, 1, 2))
+    points[0, 0, :, 0, 0] = (15.0, 15.0)
+    points[0, 0, :, 1, 0] = (40.0, 15.0)
+    weights = np.zeros((1, 1, 2, 2, 1))
+    weights[0, 0, 0, :, 0] = (1.0, 0.0)
+    weights[0, 0, 1, :, 0] = (0.5, 0.5)
+    internals = QueryInternals(
+        queries=pl.DataFrame(
+            {"query": [0], "class_id": [0], "score": [0.9], "x": [10.0], "y": [10.0]}
+            | {"w": [10.0], "h": [10.0]}
+        ),
+        embeddings=np.zeros((1, 4)),
+        layer_scores=np.zeros((1, 1)),
+        layer_boxes=np.zeros((1, 1, 4)),
+        sampling_points=points,
+        attention_weights=weights,
+        level_strides=[8, 16],
+    )
+    [row] = summarize_query_attention(internals, [0]).rows(named=True)
+    assert row["inside_share"] == pytest.approx(0.75)
+    assert row["level_share_8"] == pytest.approx(0.75)
+    assert row["level_share_16"] == pytest.approx(0.25)
+    assert row["spread"] == pytest.approx(np.sqrt(0.25 * 25.0**2) / 10.0)

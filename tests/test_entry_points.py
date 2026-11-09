@@ -270,6 +270,16 @@ def test_runs_resolved_before_an_option_existed_get_its_baseline_value(
     assert loaded["inference"]["hflip"] is False and loaded["inference"]["input_scale"] == 1.0
 
 
+def test_run_configs_load_from_any_working_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = load_experiment_config(FASTER_RCNN_BASELINE)
+    config["run"]["baseline"] = "config/faster_rcnn/baseline.toml"
+    (tmp_path / CONFIG_FILE).write_text(format_toml(config))
+    monkeypatch.chdir(tmp_path)
+    assert load_run_config(tmp_path)["clip_split"] == "main"
+
+
 SOURCE_TRAINING = dict.fromkeys(TRAINING_FIELDS, 1) | {
     "config": "config/toy/baseline.toml",
     "commit": "abc1234",

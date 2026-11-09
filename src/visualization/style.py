@@ -27,3 +27,12 @@ def set_plot_theme() -> None:
 SPLIT_COLORS = {"train": "#3a5f9e", "val": "#d9822b"}
 TEST_COLOR = "#4c9a6a"
 OCCLUSION_COLORS = {"none": "#c6dbef", "partial": "#6baed6", "heavy": "#08519c"}
+ERROR_CATEGORY_COLORS = {
+    "correct": "#029e73",
+    "duplicate": "#ece133",
+    "wrong_class": "#d55e00",
+    "poor_localisation": "#cc78bc",
+    "background": "#949494",
+}
+SIZE_BUCKET_COLORS = {"small": "#9ecae1", "medium": "#4292c6", "large": "#08306b"}
+FEATURE_LEVEL_COLORS = ("#e66101", "#5e3c99", "#1a9850")

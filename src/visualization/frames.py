@@ -10,8 +10,10 @@ from matplotlib.patches import Patch, Rectangle
 
 from src.data.annotations import BOX_COLUMNS
 from src.data.classes import CLASS_NAMES
+from src.models.rtdetr import QueryInternals
 from src.visualization.style import (
     CLASS_COLORS,
+    FEATURE_LEVEL_COLORS,
     GT_COLOR,
     IGNORED_REGION_ALPHA,
     IGNORED_REGION_COLOR,
@@ -274,6 +276,55 @@ def plot_crop_panels(
     return fig
 
 
+def plot_frame_sequence(
+    frames: pl.DataFrame,
+    objects: pl.DataFrame,
+    detections: pl.DataFrame,
+    crop_corner: tuple[int, int],
+    crop_size: tuple[int, int],
+    title: str,
+) -> Figure:
+    """Plot the same crop of consecutive frames side by side, with GT and detection boxes.
+
+    Args:
+        frames: One row per panel, in panel order, with `image_id`, absolute `file_path`, and
+            `panel_title`.
+        objects: GT boxes with `image_id` and pixel box columns, drawn thin in the GT color.
+        detections: Boxes with `image_id` and pixel box columns, drawn thick in the
+            prediction color.
+        crop_corner: Top-left corner (x, y) of the crop in px.
+        crop_size: Crop (width, height) in px.
+        title: Figure title.
+
+    Returns:
+        Figure with one axes per frame.
+    """
+    x0, y0 = crop_corner
+    fig, axes = plt.subplots(1, frames.height, figsize=(3 * frames.height, 3.3), squeeze=False)
+    for ax, (image_id, file_path, panel_title) in zip(
+        axes[0], frames.select("image_id", "file_path", "panel_title").iter_rows(), strict=True
+    ):
+        ax.imshow(plt.imread(file_path))
+        draw_boxes(ax, objects.filter(pl.col("image_id") == image_id), GT_COLOR, CONTEXT_LINEWIDTH)
+        draw_boxes(
+            ax,
+            detections.filter(pl.col("image_id") == image_id),
+            PREDICTION_COLOR,
+            EXAMPLE_LINEWIDTH,
+        )
+        ax.set(
+            xlim=(x0, x0 + crop_size[0]),
+            ylim=(y0 + crop_size[1], y0),
+            xticks=[],
+            yticks=[],
+            title=panel_title,
+        )
+        ax.grid(False)
+    fig.suptitle(title)
+    fig.tight_layout()
+    return fig
+
+
 def compute_context_crop(
     box: tuple[float, float, float, float],
     frame_size: tuple[int, int],
@@ -374,4 +425,88 @@ def plot_error_examples(
     ]
     fig.legend(handles=handles, ncol=3, loc="lower center", fontsize=9, frameon=False)
     fig.tight_layout(rect=(0, 0.03, 1, 1))
+    return fig
+
+
+def plot_query_attention(
+    image_path: Path,
+    internals: QueryInternals,
+    query_ids: list[int],
+    layers: list[int],
+    context_scale: float,
+    min_side: int,
+) -> Figure:
+    """Plot the cross-attention sampling locations of queries, one row per query.
+
+    Each panel crops the frame around the query's final box and shows the box of that
+    decoder layer and every sampling location of all heads, colored by feature level, with
+    an area proportional to its attention weight.
+
+    Args:
+        image_path: Path of the frame image.
+        internals: Result of `predict_query_internals` for this frame.
+        query_ids: Queries to plot, one row each.
+        layers: Decoder layers (from 0) to plot, one column each.
+        context_scale: Crop side as a multiple of the longer side of the final box.
+        min_side: Smallest crop side in px.
+
+    Returns:
+        Figure with one axes per query and layer and a legend of the feature levels.
+    """
+    image = plt.imread(image_path)
+    frame_size = (image.shape[1], image.shape[0])
+    fig, axes = plt.subplots(
+        len(query_ids),
+        len(layers),
+        figsize=(2.8 * len(layers), 2.9 * len(query_ids)),
+        squeeze=False,
+    )
+    for row_axes, query in zip(axes, query_ids, strict=True):
+        final = internals.queries.row(query, named=True)
+        x0, y0, side = compute_context_crop(
+            (final["x"], final["y"], final["w"], final["h"]), frame_size, context_scale, min_side
+        )
+        for ax, layer in zip(row_axes, layers, strict=True):
+            ax.imshow(image)
+            x, y, w, h = internals.layer_boxes[layer, query]
+            ax.add_patch(
+                Rectangle(
+                    (x, y),
+                    w,
+                    h,
+                    fill=False,
+                    edgecolor=PREDICTION_COLOR,
+                    linewidth=EXAMPLE_LINEWIDTH,
+                )
+            )
+            for level, color in enumerate(FEATURE_LEVEL_COLORS[: len(internals.level_strides)]):
+                points = internals.sampling_points[layer, query, :, level].reshape(-1, 2)
+                weights = internals.attention_weights[layer, query, :, level].ravel()
+                ax.scatter(
+                    points[:, 0],
+                    points[:, 1],
+                    s=400 * weights,
+                    color=color,
+                    alpha=0.7,
+                    linewidths=0,
+                )
+            ax.set(
+                xlim=(x0, x0 + side),
+                ylim=(y0 + side, y0),
+                xticks=[],
+                yticks=[],
+                title=f"{CLASS_NAMES[final['class_id']]} {final['score']:.2f}, layer {layer + 1}",
+            )
+            ax.title.set_fontsize(9)
+            ax.grid(False)
+    fig.legend(
+        handles=[
+            Patch(color=color, label=f"stride {stride}")
+            for stride, color in zip(internals.level_strides, FEATURE_LEVEL_COLORS, strict=False)
+        ],
+        loc="lower center",
+        ncol=len(internals.level_strides),
+        frameon=False,
+    )
+    fig.tight_layout(rect=(0, 0.04, 1, 1))
     return fig
