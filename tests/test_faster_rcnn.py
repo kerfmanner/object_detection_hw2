@@ -281,3 +281,21 @@ def test_fold_configs_train_the_giou_member_on_the_other_folds(fold: int) -> Non
         k: v for k, v in final.items() if k not in unchanged
     }
     check_training_budget(config)
+
+
+def test_recipe_config_adds_the_rtdetr_augmentation_to_the_giou_member() -> None:
+    config = load_experiment_config(FASTER_RCNN_BASELINE.parent / "giou_recipe.toml")
+    giou = load_experiment_config(FASTER_RCNN_BASELINE.parent / "giou_loss.toml")
+    recipe = load_experiment_config(
+        FASTER_RCNN_BASELINE.parents[1] / "rtdetr" / "augment_recipe.toml"
+    )
+    assert config["augment"] == giou["augment"] | {
+        key: recipe["augment"][key] for key in ("hflip", "photometric", "train_scales")
+    } | {"clean_epochs": 1}
+    assert config["batch_size"] * config["grad_accum"] == giou["batch_size"] * giou["grad_accum"]
+    assert config["freeze_batchnorm"] and config["roi_heads"] == giou["roi_heads"]
+    unchanged = ("run", "epochs", "batch_size", "grad_accum", "augment")
+    assert {k: v for k, v in config.items() if k not in unchanged} == {
+        k: v for k, v in giou.items() if k not in unchanged
+    }
+    check_training_budget(config)

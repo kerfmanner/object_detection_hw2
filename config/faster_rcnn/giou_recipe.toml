@@ -1,0 +1,13 @@
+# Tests the RT-DETRv2 recipe augmentation of rtdetr-augment_recipe (horizontal flip, photometric distortion, multi-scale training, clean last epoch; +0.0164 mAP on RT-DETR, the only data change above the 0.0094 seed noise) on the Faster R-CNN ensemble member giou_loss, whose frames are unmodified; keep if val mAP beats giou_loss (0.3066) by more than 0.0094 and swapping it into ens_rtdetr4_frcnn2_yolo2_smooth raises both val folds
+epochs = 4  # giou_loss 5; its monitoring peaked at epoch 2 of 5 (0.3068), and with a constant LR these 4 epochs train with the same LR as its first 4; about 1 GPU hour
+batch_size = 2  # baseline 4; 8.4 GB peak at batch 4 and 1024 px would reach about 12 GB at the 1216 px scale (1.41 times the pixels)
+grad_accum = 2  # baseline 1; effective batch size stays 4, and with frozen BatchNorm (freeze_batchnorm) two batches of 2 give the gradient of one batch of 4
+
+[roi_heads]
+box_loss = "giou"  # as giou_loss
+
+[augment]
+hflip = true  # as rtdetr-augment_recipe
+photometric = true  # as rtdetr-augment_recipe
+train_scales = [832, 896, 960, 1024, 1024, 1024, 1088, 1152, 1216]  # as rtdetr-augment_recipe: 0.81 to 1.19 of min_size 1024, the shared input size of both families
+clean_epochs = 1  # as rtdetr-augment_recipe: the last epoch, here 4 of 4, trains on unmodified frames at 1024 px
