@@ -1,0 +1,13 @@
+# ens_recipe_frcnn_yolo_yolo1280_smooth plus three RT-DETR members (the flip member rtdetr-infer_recipe_hflip, rtdetr-infer_recipe_step2_det500, and the seed 7 repeat rtdetr-recipe_step2_repeat-s7) and a second Faster R-CNN (faster_rcnn-lr_cosine), chosen by forward selection on val predictions: 0.3859 mAP against 0.3755, both val folds higher (laptop grid); further members, weights, WBF IoU, and temporal settings changed it by at most 0.0006
+members = ["rtdetr-augment_recipe", "rtdetr-infer_recipe_hflip", "rtdetr-infer_recipe_step2_det500", "rtdetr-recipe_step2_repeat-s7", "faster_rcnn-giou_loss", "faster_rcnn-lr_cosine", "yolo-baseline", "yolo-imgsz_1280"]  # four RT-DETR, two Faster R-CNN, two YOLO members
+weights = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]  # equal weights, as ens_recipe_frcnn_yolo_yolo1280_smooth; 1.5 for the Faster R-CNN and YOLO members gave 0.3851
+fusion = "wbf"  # as ens_recipe_frcnn_yolo_yolo1280_smooth
+iou_thresh = 0.65  # as ens_recipe_frcnn_yolo_yolo1280_smooth; 0.6 gave 0.3856
+
+[temporal]
+enabled = true  # as ens_recipe_frcnn_yolo_yolo1280_smooth
+link_iou = 0.5  # as ens_recipe_frcnn_yolo_yolo1280_smooth
+min_score = 0.0  # as ens_recipe_frcnn_yolo_yolo1280_smooth
+weight = 0.5  # as ens_recipe_frcnn_yolo_yolo1280_smooth; 0.6 gave 0.3865, within noise
+statistic = "max"  # as ens_recipe_frcnn_yolo_yolo1280_smooth
+should_smooth_boxes = true  # as ens_recipe_frcnn_yolo_yolo1280_smooth
