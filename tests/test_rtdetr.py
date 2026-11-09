@@ -281,7 +281,7 @@ def test_optimizer_follows_the_rtdetr_recipe_parameter_groups(
     trainable = {id(p) for p in baseline_model.parameters() if p.requires_grad}
     grouped = [id(p) for group in optimizer.param_groups for p in group["params"]]
     assert len(grouped) == len(set(grouped)) and set(grouped) == trainable
-    for change in ({"ema": True}, {"schedule": "cosine"}, {"warmup_iters": -1}):
+    for change in ({"schedule": "cosine"}, {"warmup_iters": -1}):
         with pytest.raises(ValueError):
             build_rtdetr_optimizer(baseline_model, baseline_config | change)
 
@@ -508,8 +508,10 @@ def test_inference_configs_change_only_inference_settings_of_the_reference(
     baseline_config: dict, config_path: Path
 ) -> None:
     overrides = tomllib.loads(config_path.read_text())
-    assert config_path.read_text().startswith("# Inference only, on rtdetr-baseline: ")
-    assert overrides.pop("source") == "rtdetr-baseline"
+    source = overrides.pop("source")
+    assert config_path.read_text().startswith(f"# Inference only, on {source}")
+    source_stem = source.removeprefix("rtdetr-")
+    assert (RTDETR_DIR / f"{source_stem}.toml").exists() and not source_stem.startswith("infer_")
     assert set(overrides) <= set(INFERENCE_CONFIG_KEYS) and overrides
     assert find_run_dir(RESULTS_PATH, "rtdetr-baseline").name == "20261106-1742"
     config = merge_config(baseline_config, overrides)

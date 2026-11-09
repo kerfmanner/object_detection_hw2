@@ -58,6 +58,12 @@ photometric = false  # torchvision RandomPhotometricDistort with p 0.5 and its d
 train_scales = []  # multi-scale training: shorter frame sides in px, one drawn uniformly per batch, with max_size scaled by the same factor; repeated values are drawn more often; empty trains every batch at min_size
 clean_epochs = 0  # last epochs trained without hflip, photometric, and train_scales, integer from 0 to epochs - 1 (the recipe switches them off for its last epoch of 72)
 
+[ema]
+# Exponential moving average of the weights (ModelEMA of the official RT-DETRv2 code, https://github.com/lyuwenyu/RT-DETR/blob/main/rtdetrv2_pytorch/src/optim/ema.py); when enabled, the per-epoch monitoring, best.pt, and last.pt hold the averaged weights
+enabled = false  # true trains with the average and evaluates it, false uses the trained weights as they are
+decay = 0.999  # weight of the previous average after the ramp, in (0, 1); the average spans about 1 / (1 - decay) = 1,000 optimizer steps, about 0.8 epoch at step 5 (1,230 steps per epoch at effective batch 4); the official 0.9999 spans 10,000 steps, more than a whole baseline run (8,600 steps)
+warmup_steps = 100  # ramp decay * (1 - exp(-step / warmup_steps)), integer of at least 1; with the official 2,000 the decay stays below 0.71 until epoch 2, where every run so far peaks, so the average would equal the trained weights there
+
 [ignored_regions]
 # Ignored regions (crowds, dense parking, VisDrone others) in the training frames
 mask = false  # fill the ignored regions of every training frame with fill, except the pixels of labelled boxes; monitoring, val, and test frames stay unmodified; false trains on unmodified frames, where ignored regions act as background

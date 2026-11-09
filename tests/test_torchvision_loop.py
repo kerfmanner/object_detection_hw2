@@ -31,10 +31,12 @@ from src.training.torchvision_loop import (
     build_optimizer,
     check_training_budget,
     collate_detection_batch,
+    compute_ema_decay,
     freeze_batchnorm,
     select_autocast_dtype,
     train_one_epoch,
     train_torchvision_detector,
+    update_ema_weights,
 )
 from tests.conftest import SYNTHETIC_EMPTY_FRAME, SYNTHETIC_SPLIT_CLIPS
 from tests.test_entry_points import TRAINING_ONLY_FIELDS_ADDED_WITH_RTDETR
@@ -222,6 +224,10 @@ def test_full_run_needs_epochs_batch_size_and_lr(baseline_path: Path) -> None:
     assert timing["freeze_batchnorm"]
     with pytest.raises(ValueError, match="train_frames must be"):
         check_training_budget(timing | {"train_frames": "val_reporting"})
+    with pytest.raises(ValueError, match="ema.decay must be.*ema.warmup_steps must be"):
+        check_training_budget(
+            baseline | {"ema": {"enabled": True, "decay": 1.0, "warmup_steps": 0}}
+        )
 
 
 def test_only_constant_and_cosine_schedules_without_warmup_are_supported() -> None:
@@ -406,3 +412,52 @@ def test_augmented_epochs_vary_frames_and_sizes_and_the_clean_epoch_does_not(
     transform = model.transform
     assert isinstance(transform, GeneralizedRCNNTransform)
     assert (transform.min_size, transform.max_size) == ((64,), 96)
+
+
+def test_ema_decay_ramps_up_from_zero_to_the_configured_decay() -> None:
+    ema = {"enabled": True, "decay": 0.999, "warmup_steps": 100}
+    assert compute_ema_decay(ema, 0) == 0.0
+    assert compute_ema_decay(ema, 100) == pytest.approx(0.999 * (1 - math.exp(-1)))
+    assert compute_ema_decay(ema, 10_000) == pytest.approx(0.999)
+
+
+def test_ema_update_averages_floating_point_entries_and_copies_counters() -> None:
+    model = torch.nn.Sequential(torch.nn.Linear(2, 2), torch.nn.BatchNorm1d(2))
+    average = torch.nn.Sequential(torch.nn.Linear(2, 2), torch.nn.BatchNorm1d(2))
+    current, averaged = model.state_dict(), average.state_dict()
+    for key in ("0.weight", "0.bias", "1.weight", "1.bias"):
+        current[key].fill_(1.0)
+        averaged[key].fill_(0.0)
+    current["1.running_mean"].fill_(4.0)
+    current["1.num_batches_tracked"].fill_(5)
+    update_ema_weights(average, model, decay=0.75)
+    assert torch.allclose(averaged["0.weight"], torch.full((2, 2), 0.25))
+    assert torch.allclose(averaged["1.running_mean"], torch.full((2,), 0.25 * 4.0))
+    assert int(averaged["1.num_batches_tracked"]) == 5
+    assert torch.equal(current["0.weight"], torch.ones(2, 2))
+
+
+def test_ema_run_monitors_and_saves_the_averaged_weights(
+    synthetic_root: Path, synthetic_data_config: None, tmp_path: Path
+) -> None:
+    tiny_config = load_tiny_config(FASTER_RCNN_BASELINE)
+    config = tiny_config | {
+        "epochs": 1,
+        "batch_size": 4,
+        "lr": 0.01,
+        "num_workers": 0,
+        "ema": {"enabled": True, "decay": 0.5, "warmup_steps": 1},
+        "logging": tiny_config["logging"] | {"sample_frames": 1},
+    }
+    model = build_model(config)
+    initial = {key: value.clone() for key, value in model.state_dict().items()}
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    wandb_run = init_wandb(config, WANDB_SETTINGS, run_dir=None)
+    train_torchvision_detector(model, config, synthetic_root, run_dir, wandb_run)
+    wandb_run.finish()
+    saved = torch.load(run_dir / BEST_CHECKPOINT, weights_only=True)[MODEL_STATE_KEY]
+    trained = model.state_dict()
+    key = "roi_heads.box_predictor.cls_score.weight"
+    assert not torch.equal(trained[key], initial[key])
+    assert not torch.equal(saved[key], trained[key]) and not torch.equal(saved[key], initial[key])

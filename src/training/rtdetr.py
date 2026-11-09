@@ -19,16 +19,15 @@ def build_rtdetr_optimizer(model: torch.nn.Module, config: dict) -> torch.optim.
         model: `RTDetrDetector`, whose backbone parameters are named `detector.model.backbone.*`
             and whose frozen parameters have `requires_grad` False.
         config: Resolved configuration with `lr`, `backbone_lr`, `weight_decay`,
-            `norm_weight_decay`, `betas`, `schedule`, `warmup_iters`, and `ema`.
+            `norm_weight_decay`, `betas`, `schedule`, and `warmup_iters`.
 
     Returns:
         The optimizer.
     """
     warmup_iters = config["warmup_iters"]
-    if config["schedule"] != SUPPORTED_SCHEDULE or config["ema"]:
+    if config["schedule"] != SUPPORTED_SCHEDULE:
         raise ValueError(
-            f"RT-DETR supports schedule {SUPPORTED_SCHEDULE!r} without EMA only, got "
-            f"{config['schedule']!r} with ema {config['ema']}"
+            f"RT-DETR supports schedule {SUPPORTED_SCHEDULE!r} only, got {config['schedule']!r}"
         )
     if type(warmup_iters) is not int or warmup_iters < 0:
         raise ValueError(f"warmup_iters must be an integer of at least 0, got {warmup_iters}")

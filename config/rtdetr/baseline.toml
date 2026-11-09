@@ -18,7 +18,6 @@ betas = [0.9, 0.999]  # AdamW beta1 and beta2; official recipe values
 grad_clip_norm = 0.1  # maximum L2 norm of all gradients before an optimizer step, 0 disables clipping; official recipe clip_max_norm 0.1
 schedule = "constant"  # LR schedule after warmup: constant, the only supported value (the official recipe's MultiStepLR milestone 1000 is never reached in its 72 epochs either)
 warmup_iters = 2000  # linear LR warmup over this many optimizer steps, factor min(1, (step + 1) / warmup_iters), integer of at least 0; official LinearWarmup 2000; about 1.6 epochs at step 5 and effective batch 4
-ema = false  # exponential moving average of the weights: false, the only supported value (the official recipe uses EMA decay 0.9999)
 freeze_batchnorm = true  # BatchNorm layers outside the backbone (encoder, input projections) keep their COCO running statistics (eval mode) and are not trained; false trains them on batches of batch_size frames; backbone BatchNorm is always frozen (checkpoint config freeze_backbone_batch_norms)
 amp = true  # mixed precision training on CUDA: true or false; CPU always trains in float32; inference is float32
 amp_dtype = "bfloat16"  # autocast dtype when amp is true: bfloat16 (no gradient scaling; float32 on GPUs without native bfloat16, e.g. the Kaggle T4) or float16 (with gradient scaling); the RTX 5070 trains in bfloat16
@@ -60,6 +59,12 @@ hflip = false  # flip each training frame and its boxes horizontally with probab
 photometric = false  # torchvision RandomPhotometricDistort with p 0.5 and its default ranges: brightness 0.875 to 1.125, contrast and saturation 0.5 to 1.5, hue -0.05 to 0.05, and channel permutation, each applied with probability 0.5 (recipe p 0.5)
 train_scales = []  # multi-scale training: shorter frame sides in px, one drawn uniformly per batch, with max_size scaled by the same factor; repeated values are drawn more often; empty trains every batch at min_size
 clean_epochs = 0  # last epochs trained without hflip, photometric, and train_scales, integer from 0 to epochs - 1 (the recipe switches them off for its last epoch of 72)
+
+[ema]
+# Exponential moving average of the weights (ModelEMA of the official RT-DETRv2 code, https://github.com/lyuwenyu/RT-DETR/blob/main/rtdetrv2_pytorch/src/optim/ema.py); when enabled, the per-epoch monitoring, best.pt, and last.pt hold the averaged weights
+enabled = false  # true trains with the average and evaluates it, false uses the trained weights as they are
+decay = 0.999  # weight of the previous average after the ramp, in (0, 1); the average spans about 1 / (1 - decay) = 1,000 optimizer steps, about 0.8 epoch at step 5 (1,230 steps per epoch at effective batch 4); the official 0.9999 spans 10,000 steps, more than a whole baseline run (8,600 steps)
+warmup_steps = 100  # ramp decay * (1 - exp(-step / warmup_steps)), integer of at least 1; with the official 2,000 the decay stays below 0.71 until epoch 2, where every run so far peaks, so the average would equal the trained weights there
 
 [ignored_regions]
 # Ignored regions (crowds, dense parking, VisDrone others) in the training frames

@@ -1,3 +1,4 @@
+import copy
 import json
 import logging
 import math
@@ -63,12 +64,12 @@ InputSize = tuple[int, int]
 
 
 def check_training_budget(config: dict) -> None:
-    """Check the training frames, epochs, batch size, accumulation, LR, and augmentation
-    schedule of a full run.
+    """Check the training frames, epochs, batch size, accumulation, LR, augmentation
+    schedule, and weight averaging of a full run.
 
     Args:
         config: Resolved configuration with `train_frames`, `epochs`, `batch_size`,
-            `grad_accum`, `lr`, and the `[augment]` table.
+            `grad_accum`, `lr`, and the `[augment]` and `[ema]` tables.
     """
     problems = []
     if config["train_frames"] not in TRAIN_FRAME_STEPS:
@@ -81,6 +82,11 @@ def check_training_budget(config: dict) -> None:
     clean_epochs = config["augment"]["clean_epochs"]
     if type(clean_epochs) is not int or not 0 <= clean_epochs < config["epochs"]:
         problems.append("augment.clean_epochs must be an integer from 0 to epochs - 1")
+    ema = config["ema"]
+    if not 0 < ema["decay"] < 1:
+        problems.append("ema.decay must be in (0, 1)")
+    if type(ema["warmup_steps"]) is not int or ema["warmup_steps"] < 1:
+        problems.append("ema.warmup_steps must be an integer of at least 1")
     if problems:
         raise ValueError(f"Invalid config {config['run']['config']}: {'; '.join(problems)}")
 
@@ -241,6 +247,43 @@ def select_autocast_dtype(config: dict, device: torch.device) -> torch.dtype | N
     return dtype
 
 
+def compute_ema_decay(ema: dict, step: int) -> float:
+    """Return the decay of the weight average after an optimizer step, ramped up from 0.
+
+    The decay is `decay * (1 - exp(-step / warmup_steps))`, as in ModelEMA of the official
+    RT-DETRv2 code, so that the early average follows the fast-changing weights:
+    https://github.com/lyuwenyu/RT-DETR/blob/main/rtdetrv2_pytorch/src/optim/ema.py
+
+    Args:
+        ema: The `[ema]` table with `decay` and `warmup_steps`.
+        step: Number of optimizer steps taken, including this one.
+
+    Returns:
+        Weight of the previous average in the update, in [0, decay).
+    """
+    return ema["decay"] * (1 - math.exp(-step / ema["warmup_steps"]))
+
+
+def update_ema_weights(ema_model: torch.nn.Module, model: torch.nn.Module, decay: float) -> None:
+    """Move the floating-point parameters and buffers of the averaged copy toward the model.
+
+    Each floating-point state entry becomes `decay * average + (1 - decay) * current`, as in
+    ModelEMA of the official RT-DETRv2 code; other entries (counters) are copied.
+
+    Args:
+        ema_model: Averaged copy of `model`, updated in place.
+        model: Trained model.
+        decay: Weight of the previous average, in [0, 1).
+    """
+    current = model.state_dict()
+    with torch.no_grad():
+        for key, averaged in ema_model.state_dict().items():
+            if averaged.is_floating_point():
+                averaged.lerp_(current[key], 1 - decay)
+            else:
+                averaged.copy_(current[key])
+
+
 def describe_precision(dtype: torch.dtype | None) -> str:
     """Name the training precision for logs and `metrics.json`.
 
@@ -264,6 +307,7 @@ def train_one_epoch(
     wandb_run: wandb.Run,
     iteration: int,
     input_sizes: list[InputSize] | None = None,
+    ema_model: torch.nn.Module | None = None,
 ) -> tuple[dict[str, float], int]:
     """Train one epoch with optional mixed precision and gradient accumulation.
 
@@ -275,7 +319,9 @@ def train_one_epoch(
     to W&B under `iter/`, against the `iteration` (batch) counter. With `freeze_batchnorm`,
     BatchNorm layers stay in eval mode, so their running statistics do not change. With
     `input_sizes`, each batch is resized to its own size (multi-scale training) and the
-    configured `min_size` and `max_size` are restored after the epoch.
+    configured `min_size` and `max_size` are restored after the epoch. With `ema_model`,
+    every optimizer step also updates the weight average with the decay of
+    `compute_ema_decay` at the scheduler's step count.
 
     Args:
         model: Detector of the shared loop (torchvision or wrapped RT-DETR) on `device`.
@@ -284,12 +330,14 @@ def train_one_epoch(
         scheduler: LR scheduler from `build_lr_scheduler`.
         scaler: Gradient scaler, enabled when training in float16.
         config: Resolved configuration with `run.family`, `grad_accum`, `grad_clip_norm`,
-            `amp`, `amp_dtype`, `freeze_batchnorm`, and `[logging]` `log_interval`.
+            `amp`, `amp_dtype`, `freeze_batchnorm`, `[logging]` `log_interval`, and the
+            `[ema]` table when `ema_model` is given.
         device: Device of the model.
         wandb_run: W&B run for the loss curves.
         iteration: Number of batches trained before this epoch.
         input_sizes: One (min_size, max_size) pair in px per batch from `draw_input_sizes`,
             or None to train at the model's input size.
+        ema_model: Averaged copy of `model` to update after every optimizer step, or None.
 
     Returns:
         Mean of each loss over the epoch's batches, with their sum under `loss`, and the
@@ -328,6 +376,9 @@ def train_one_epoch(
             scaler.update()
             scheduler.step()
             optimizer.zero_grad(set_to_none=True)
+            if ema_model is not None:
+                decay = compute_ema_decay(config["ema"], scheduler.last_epoch)
+                update_ema_weights(ema_model, model, decay)
         iteration += 1
         for name, value in values.items():
             epoch_sums[name] = epoch_sums.get(name, 0.0) + value
@@ -450,7 +501,9 @@ def fit_torchvision_detector(
     With `[augment]` `train_scales`, every batch of an epoch gets an input size from
     `draw_input_sizes`, seeded with `seed` and the epoch. The last `clean_epochs` epochs
     train at the configured input size and on `clean_dataset` when given, the official
-    RT-DETRv2 recipe's switch-off of augmentation before the end of training.
+    RT-DETRv2 recipe's switch-off of augmentation before the end of training. With `[ema]`
+    `enabled`, a copy of the model keeps an exponential moving average of the weights
+    (`update_ema_weights`), and the monitoring and both checkpoints use that copy.
 
     Args:
         model: torchvision detector with background label 0, or wrapped RT-DETR.
@@ -458,7 +511,7 @@ def fit_torchvision_detector(
             `num_workers`, `grad_accum`, `amp`, `amp_dtype`, `grad_clip_norm`, `seed`,
             `freeze_batchnorm`, `schedule`, `warmup_iters`, the fields of the family's
             optimizer builder, the `[roi_heads]` table for Faster R-CNN, the `[focal_loss]`
-            table for RetinaNet, and the `[augment]` and `[logging]` tables.
+            table for RetinaNet, and the `[augment]`, `[ema]`, and `[logging]` tables.
         train_dataset: Training frames.
         monitor_tables: Annotation tables whose `images` are the monitoring val frames.
         checkpoint_dir: Existing directory for `best.pt` and `last.pt`.
@@ -489,6 +542,8 @@ def fit_torchvision_detector(
     model.to(device)
     if config["freeze_batchnorm"]:
         freeze_batchnorm(model)
+    ema_model = copy.deepcopy(model).requires_grad_(False) if config["ema"]["enabled"] else None
+    evaluated_model = model if ema_model is None else ema_model
     family = config["run"]["family"]
     optimizer = OPTIMIZER_BUILDERS[family](model, config)
     total_steps = config["epochs"] * math.ceil(len(loader) / config["grad_accum"])
@@ -530,10 +585,11 @@ def fit_torchvision_detector(
             wandb_run,
             iteration,
             input_sizes,
+            ema_model,
         )
         gpu_memory_gb = torch.cuda.max_memory_allocated(device) / BYTES_PER_GB if is_cuda else None
         predictions, _ = detect_frames(
-            model,
+            evaluated_model,
             monitor_tables.images,
             device,
             warmup_images=0,
@@ -552,7 +608,7 @@ def fit_torchvision_detector(
             "gpu_memory_gb": gpu_memory_gb,
         }
         history.append(record)
-        checkpoint = {MODEL_STATE_KEY: model.state_dict(), "epoch": epoch}
+        checkpoint = {MODEL_STATE_KEY: evaluated_model.state_dict(), "epoch": epoch}
         torch.save(checkpoint, checkpoint_dir / LAST_CHECKPOINT)
         if val_map > best_map:
             best_map, best_epoch = val_map, epoch
