@@ -36,3 +36,10 @@ ERROR_CATEGORY_COLORS = {
 }
 SIZE_BUCKET_COLORS = {"small": "#9ecae1", "medium": "#4292c6", "large": "#08306b"}
 FEATURE_LEVEL_COLORS = ("#e66101", "#5e3c99", "#1a9850")
+FAMILY_COLORS = {
+    "faster_rcnn": "#1b9e77",
+    "retinanet": "#d95f02",
+    "yolo": "#7570b3",
+    "rtdetr": "#e7298a",
+    "postprocess": "#444444",
+}

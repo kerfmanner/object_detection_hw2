@@ -4,8 +4,10 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import to_hex
 
 from src.data.classes import CLASS_NAMES
+from src.training.experiment import REPO_ROOT
 from src.visualization.style import (
     CLASS_COLORS,
+    FAMILY_COLORS,
     GT_COLOR,
     IGNORED_REGION_COLOR,
     OCCLUSION_COLORS,
@@ -33,6 +35,13 @@ def test_all_colors_are_distinct_hex_values() -> None:
     ]
     assert all(re.fullmatch(r"#[0-9a-f]{6}", color) for color in colors)
     assert len(set(colors)) == len(colors)
+
+
+def test_family_colors_cover_every_config_family() -> None:
+    families = {path.name for path in (REPO_ROOT / "config").iterdir() if path.is_dir()}
+    assert set(FAMILY_COLORS) == families
+    assert len(set(FAMILY_COLORS.values())) == len(FAMILY_COLORS)
+    assert all(re.fullmatch(r"#[0-9a-f]{6}", color) for color in FAMILY_COLORS.values())
 
 
 def test_set_plot_theme_uses_class_palette() -> None:
