@@ -2,7 +2,7 @@
 arch = "yolo26m"  # baseline yolo11s; YOLO26 medium, COCO-pretrained (https://docs.ultralytics.com/models/yolo26/)
 p2_head = true  # baseline false; yolo26-p2.yaml at scale m, P3 to P5 weights from yolo26m.pt, new P2 layers random
 imgsz = 1920  # baseline 1824; inference on full frames, equal to [tiles] frame_width
-batch_size = 8  # baseline 2; 1088 px tiles; Ultralytics halves it on a first-epoch out-of-memory error, effective batch stays 64 (nbs)
+batch_size = 3  # baseline 2; 1088 px tiles; batch 8 needed about 24 GB and batch 4 reached 12.4 GB reserved on the 12 GB RTX 5070 and spilled into system RAM, batch 3 leaves headroom; gradients accumulate over 21 batches (effective 63, Ultralytics nbs 64)
 optimizer = "SGD"  # baseline AdamW; the Ultralytics COCO recipe optimizer
 lr = 0.01  # baseline 0.000833; Ultralytics SGD default lr0
 momentum = 0.937  # baseline 0.9; Ultralytics SGD default
