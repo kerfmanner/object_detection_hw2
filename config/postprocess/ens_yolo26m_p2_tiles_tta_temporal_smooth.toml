@@ -1,0 +1,13 @@
+# Temporal rescoring and box smoothing on top of ens_yolo26m_p2_tiles_tta, with the settings of ens_rtdetr_frcnn_yolo_temporal_smooth (link IoU 0.5, max track score, weight 0.5)
+members = ["yolo-yolo26m_p2_tiles", "yolo-infer_yolo26m_p2_tiles_size2304", "yolo-infer_yolo26m_p2_tiles_hflip"]  # as ens_yolo26m_p2_tiles_tta
+weights = [1.0, 1.0, 1.0]  # as ens_yolo26m_p2_tiles_tta
+fusion = "wbf"  # as ens_yolo26m_p2_tiles_tta
+iou_thresh = 0.55  # as ens_yolo26m_p2_tiles_tta
+
+[temporal]
+enabled = true  # baseline false
+link_iou = 0.5  # as ens_rtdetr_frcnn_yolo_temporal_smooth
+min_score = 0.0  # as ens_rtdetr_frcnn_yolo_temporal_smooth
+weight = 0.5  # as ens_rtdetr_frcnn_yolo_temporal_smooth
+statistic = "max"  # as ens_rtdetr_frcnn_yolo_temporal_smooth
+should_smooth_boxes = true  # baseline false

@@ -1,0 +1,5 @@
+# Inference only, on yolo-yolo26m_p2_tiles, which trained with Ultralytics' default horizontal flips (fliplr 0.5): predicts flipped frames and mirrors the boxes back, the flip member of a flip TTA fusion
+source = "yolo-yolo26m_p2_tiles"  # trained run whose best.pt predicts
+
+[inference]
+hflip = true  # baseline false

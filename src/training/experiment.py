@@ -20,9 +20,9 @@ TRAIN_SPLIT_CHOICES = (["train"], ["train", "val"])
 def load_run_config(run_dir: Path) -> dict:
     """Read the resolved configuration of a run for prediction and evaluation.
 
-    `clip_split` and inference options added to the family baseline after the run was
-    resolved take their baseline value, which reproduces the earlier behaviour; options the
-    run records are kept.
+    Options and tables added to the family baseline after the run was resolved (e.g.
+    `clip_split`, YOLO `p2_head`) and missing inference options take their baseline value,
+    which reproduces the earlier behaviour; options the run records are kept.
 
     Args:
         run_dir: Run directory with the resolved `config.toml`, whose `run.baseline` names
@@ -34,7 +34,7 @@ def load_run_config(run_dir: Path) -> dict:
     """
     config = tomllib.loads((run_dir / CONFIG_FILE).read_text())
     baseline = tomllib.loads((REPO_ROOT / config["run"]["baseline"]).read_text())
-    resolved = {"clip_split": baseline["clip_split"]} | config
+    resolved = {key: value for key, value in baseline.items() if key != "run"} | config
     if "inference" in baseline:
         resolved["inference"] = baseline["inference"] | config["inference"]
     return resolved

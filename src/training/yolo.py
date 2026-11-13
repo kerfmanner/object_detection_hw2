@@ -12,9 +12,14 @@ from ultralytics import YOLO, settings
 from ultralytics.engine.trainer import BaseTrainer
 from ultralytics.utils.torch_utils import unwrap_model
 
-from src.data.annotations import MAIN_CLIP_SPLIT, load_annotations, load_clip_split
+from src.data.annotations import (
+    MAIN_CLIP_SPLIT,
+    AnnotationTables,
+    load_annotations,
+    load_clip_split,
+)
 from src.data.dataset import load_frame_steps, select_smoke_frames
-from src.data.yolo_export import write_yolo_dataset
+from src.data.yolo_export import write_yolo_dataset, write_yolo_tile_dataset
 from src.evaluate import DATA_CONFIG_PATH, METRICS_FILE
 from src.inference.frames import predict_frames
 from src.models.yolo import set_assigner_topk
@@ -80,7 +85,8 @@ def fit_yolo(
 ) -> tuple[BaseTrainer, int]:
     """Train a YOLO model with Ultralytics, writing all its outputs into `save_dir`.
 
-    Training hyperparameters not set here are Ultralytics defaults; the TAL topk of
+    The train input size is `[tiles]` `tile_size` when `should_tile` is set and `imgsz`
+    otherwise. Training hyperparameters not set here are Ultralytics defaults; the TAL topk of
     `[assigner]` is set on the training and EMA models when training starts. Per-epoch
     validation on the `val` list of `data_yaml` selects `best.pt` by mAP@[.5:.95] and uses
     the NMS options of `[inference]`. Each epoch's losses, metrics, and learning rates go to
@@ -92,8 +98,9 @@ def fit_yolo(
     Args:
         model: YOLO model from `build_model`.
         config: Resolved configuration with `imgsz`, `epochs`, `batch_size`, `optimizer`, `lr`,
-            `momentum`, `warmup_bias_lr`, `close_mosaic`, `scale`, `amp`, `seed`, `[assigner]`
-            `topk`, and `[inference]` `iou`, `max_det`, and `agnostic_nms`.
+            `lrf`, `cos_lr`, `momentum`, `weight_decay`, `warmup_epochs`, `warmup_bias_lr`,
+            `close_mosaic`, `scale`, `amp`, `seed`, `[tiles]` `should_tile` and `tile_size`,
+            `[assigner]` `topk`, and `[inference]` `iou`, `max_det`, and `agnostic_nms`.
         data_yaml: Path of the `data.yaml` from `write_yolo_dataset`.
         save_dir: New directory for the Ultralytics outputs.
         wandb_run: W&B run for the per-epoch curves.
@@ -131,14 +138,19 @@ def fit_yolo(
     model.add_callback("on_train_end", finished_trainers.append)
     model.add_callback("on_train_start", set_trainer_topk)
     inference = config["inference"]
+    tiles = config["tiles"]
     options = {
         "data": str(data_yaml),
-        "imgsz": config["imgsz"],
+        "imgsz": tiles["tile_size"] if tiles["should_tile"] else config["imgsz"],
         "epochs": config["epochs"],
         "batch": config["batch_size"],
         "optimizer": config["optimizer"],
         "lr0": config["lr"],
+        "lrf": config["lrf"],
+        "cos_lr": config["cos_lr"],
         "momentum": config["momentum"],
+        "weight_decay": config["weight_decay"],
+        "warmup_epochs": config["warmup_epochs"],
         "warmup_bias_lr": config["warmup_bias_lr"],
         "close_mosaic": config["close_mosaic"],
         "scale": config["scale"],
@@ -156,22 +168,48 @@ def fit_yolo(
     return finished_trainers[-1], best_epochs[-1]
 
 
-def run_yolo_smoke(model: YOLO, config: dict, images: pl.DataFrame, wandb_run: wandb.Run) -> None:
-    """Train one CPU step on two smoke frames and predict two smoke val frames.
+def write_training_dataset(
+    annotations: AnnotationTables, config: dict, split_steps: dict[str, int], output_dir: Path
+) -> Path:
+    """Export the train and monitoring frames as full frames or, with `should_tile`, as tiles.
+
+    Ignored regions are filled only in the train split, and only with `should_mask_ignored`.
+
+    Args:
+        annotations: Annotation tables of the splits to export.
+        config: Resolved configuration with the `[tiles]` table.
+        split_steps: Mapping from split name to its frame step.
+        output_dir: Dataset directory to create.
+
+    Returns:
+        Path of the written `data.yaml`.
+    """
+    tiles = config["tiles"]
+    if not tiles["should_tile"]:
+        return write_yolo_dataset(annotations.images, split_steps, output_dir)
+    masked_splits = {"train"} if tiles["should_mask_ignored"] else set()
+    return write_yolo_tile_dataset(annotations, split_steps, output_dir, tiles, masked_splits)
+
+
+def run_yolo_smoke(
+    model: YOLO, config: dict, annotations: AnnotationTables, wandb_run: wandb.Run
+) -> None:
+    """Train one CPU epoch on two smoke frames and predict two smoke val frames.
 
     The first two frames of the smoke train and val clips are exported at imgsz 320; the
-    batch holds both train frames, so the epoch is a single step, followed by one
-    validation pass. Prediction uses one warmup pass. All outputs go to a temporary
-    directory that is removed afterwards.
+    batch holds two train images, so without tiles the epoch is a single step, followed by
+    one validation pass. With tiles, frames are resized to twice that width and cut into
+    320 px tiles. Prediction uses one warmup pass. All outputs go to a temporary directory
+    that is removed afterwards.
 
     Args:
         model: YOLO model from `build_model`.
         config: Resolved configuration.
-        images: Image table of all configured splits.
+        annotations: Annotation tables of all configured splits.
         wandb_run: Disabled W&B run.
     """
     smoke_images = (
-        select_smoke_frames(images, DATA_CONFIG_PATH)
+        select_smoke_frames(annotations.images, DATA_CONFIG_PATH)
         .sort("split", "frame_id")
         .group_by("split", maintain_order=True)
         .head(SMOKE_FRAMES_PER_SPLIT)
@@ -180,10 +218,18 @@ def run_yolo_smoke(model: YOLO, config: dict, images: pl.DataFrame, wandb_run: w
     smoke_config = config | {
         "imgsz": SMOKE_IMGSZ,
         "inference": config["inference"] | {"warmup_images": SMOKE_WARMUP_IMAGES},
+        "tiles": config["tiles"]
+        | {"frame_width": 2 * SMOKE_IMGSZ, "tile_size": SMOKE_IMGSZ, "min_overlap": 0},
     }
+    keys = smoke_images.select("split", "image_id")
+    smoke_annotations = AnnotationTables(
+        images=smoke_images,
+        objects=annotations.objects.join(keys, on=["split", "image_id"]),
+        ignored=annotations.ignored.join(keys, on=["split", "image_id"]),
+    )
     with tempfile.TemporaryDirectory() as work_dir:
-        data_yaml = write_yolo_dataset(
-            smoke_images, {"train": 1, "val": 1}, Path(work_dir) / DATASET_DIR
+        data_yaml = write_training_dataset(
+            smoke_annotations, smoke_config, {"train": 1, "val": 1}, Path(work_dir) / DATASET_DIR
         )
         overrides = SMOKE_TRAIN_OPTIONS | {"batch": SMOKE_FRAMES_PER_SPLIT}
         trainer, _ = fit_yolo(
@@ -205,8 +251,9 @@ def train_yolo(
     """Train a YOLO model on the adopted split and record the run in its directory.
 
     The train frames (`train_frames` step) and the monitoring val frames (`val_monitoring`
-    step) are exported to `<run_dir>/yolo_data`, Ultralytics writes its outputs to
-    `<run_dir>/ultralytics`, and its `best.pt` and `last.pt` are copied to `run_dir`.
+    step) are exported to `<run_dir>/yolo_data` (as tiles with `[tiles]` `should_tile`),
+    Ultralytics writes its outputs to `<run_dir>/ultralytics`, and its `best.pt` and
+    `last.pt` are copied to `run_dir`.
     `metrics.json` gets the `training` section with the per-epoch Ultralytics history.
 
     Args:
@@ -216,15 +263,15 @@ def train_yolo(
         run_dir: Run directory, or None for a smoke run that writes nothing.
         wandb_run: W&B run for curves and sample validation batches.
     """
-    images = load_annotations(data_root, load_clip_split(DATA_CONFIG_PATH, MAIN_CLIP_SPLIT)).images
+    annotations = load_annotations(data_root, load_clip_split(DATA_CONFIG_PATH, MAIN_CLIP_SPLIT))
     if run_dir is None:
-        run_yolo_smoke(model, config, images, wandb_run)
+        run_yolo_smoke(model, config, annotations, wandb_run)
         return
     check_training_budget(config)
     frame_steps = load_frame_steps(DATA_CONFIG_PATH)
     train_step = frame_steps[config["train_frames"]]
     split_steps = {"train": train_step, "val": frame_steps["val_monitoring"]}
-    data_yaml = write_yolo_dataset(images, split_steps, run_dir / DATASET_DIR)
+    data_yaml = write_training_dataset(annotations, config, split_steps, run_dir / DATASET_DIR)
     started = time.perf_counter()
     trainer, best_epoch = fit_yolo(
         model, config, data_yaml, run_dir / ULTRALYTICS_DIR, wandb_run, {}

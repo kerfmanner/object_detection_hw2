@@ -37,7 +37,7 @@ from src.training.experiment import (
     load_run_config,
 )
 from tests.test_experiment import BASELINE_TOML
-from tests.test_smoke import FASTER_RCNN_BASELINE, RETINANET_BASELINE
+from tests.test_smoke import FASTER_RCNN_BASELINE, RETINANET_BASELINE, YOLO_BASELINE
 
 TRAINING_ONLY_FIELDS_ADDED_WITH_RTDETR = ("amp_dtype", "grad_clip_norm")
 TRAINING_ONLY_FIELDS_ADDED_WITH_TRAIN_VAL = ("train_splits",)
@@ -268,6 +268,17 @@ def test_runs_resolved_before_an_option_existed_get_its_baseline_value(
     assert loaded["clip_split"] == "main"
     assert loaded["inference"] == config["inference"] | {"score_thresh": 0.01}
     assert loaded["inference"]["hflip"] is False and loaded["inference"]["input_scale"] == 1.0
+
+
+def test_yolo_runs_resolved_before_p2_heads_and_tiles_build_the_plain_model(
+    tmp_path: Path,
+) -> None:
+    config = load_experiment_config(YOLO_BASELINE)
+    legacy = {key: value for key, value in config.items() if key not in ("p2_head", "tiles")}
+    (tmp_path / CONFIG_FILE).write_text(format_toml(legacy))
+    loaded = load_run_config(tmp_path)
+    assert loaded["p2_head"] is False and loaded["tiles"]["should_tile"] is False
+    assert loaded == config
 
 
 def test_run_configs_load_from_any_working_directory(

@@ -1,0 +1,16 @@
+# Tests a small-object YOLO recipe as one combined change against yolo-baseline: YOLO26m with a P2 head (stride 4) trained on 1088 px tiles of frames resized to 1920 px wide (objects at their inference size, batch 8 in 12 GB), SGD with cosine decay and a short warmup, and mosaic until the last 5 epochs; inference on full frames at 1920; hypothesis: model capacity, stride-4 features, and more optimizer steps at a larger batch limit yolo-baseline, not its assignment or scale augmentation (yolo-tal_topk, yolo-scale_025)
+arch = "yolo26m"  # baseline yolo11s; YOLO26 medium, COCO-pretrained (https://docs.ultralytics.com/models/yolo26/)
+p2_head = true  # baseline false; yolo26-p2.yaml at scale m, P3 to P5 weights from yolo26m.pt, new P2 layers random
+imgsz = 1920  # baseline 1824; inference on full frames, equal to [tiles] frame_width
+batch_size = 8  # baseline 2; 1088 px tiles; Ultralytics halves it on a first-epoch out-of-memory error, effective batch stays 64 (nbs)
+optimizer = "SGD"  # baseline AdamW; the Ultralytics COCO recipe optimizer
+lr = 0.01  # baseline 0.000833; Ultralytics SGD default lr0
+momentum = 0.937  # baseline 0.9; Ultralytics SGD default
+lrf = 0.05  # baseline 0.01; final LR 5e-4
+cos_lr = true  # baseline false
+warmup_epochs = 1.0  # baseline 3.0; one epoch is about 150 optimizer steps at step 5 with two tiles per frame
+warmup_bias_lr = 0.1  # baseline 0.0; Ultralytics default for SGD
+close_mosaic = 5  # baseline 10; mosaic for 15 of 20 epochs
+
+[tiles]
+should_tile = true  # baseline false

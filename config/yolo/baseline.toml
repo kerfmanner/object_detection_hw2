@@ -1,13 +1,18 @@
 # YOLO11s baseline: COCO-pretrained yolo11s at imgsz 1824 with Ultralytics default training hyperparameters
-arch = "yolo11s"  # Ultralytics model name; weights <arch>.pt: yolo11n, yolo11s, yolo11m, yolo11l, yolo11x
+arch = "yolo11s"  # Ultralytics model name; weights <arch>.pt: yolo11n to yolo11x or yolo26n to yolo26x (n, s, m, l, x)
+p2_head = false  # true builds <arch>-p2.yaml (extra stride-4 detection level, e.g. yolo26-p2.yaml at the scale of arch) and loads the matching weights of <arch>.pt; false uses <arch>.pt as it is
 init = "coco"  # pretrained weights: coco (Ultralytics COCO checkpoint <arch>.pt), the only supported value
 train_frames = "train_tuning"  # [frame_steps] key in config/data.toml: train_tuning (step 5) or train_final (step 2)
 clip_split = "main"  # clips of train and val: main (the adopted [splits] of config/data.toml), the only value YOLO supports; the fold_<k> splits of [folds] are for the shared-loop families
-imgsz = 1824  # train and inference input size in px, multiple of 32; the longer frame side is resized to it
+imgsz = 1824  # inference input size in px, multiple of 32, and also the train input size unless [tiles] should_tile; the longer frame side is resized to it
 epochs = 20  # TODO: set after the timing run; training epochs, integer of at least 1
 batch_size = 2  # TODO: set after the timing run; images per batch, integer of at least 1, or -1 for Ultralytics AutoBatch; gradients accumulate over round(64 / batch_size) batches (Ultralytics nbs 64)
 optimizer = "AdamW"  # Ultralytics optimizer: SGD, MuSGD, Adam, Adamax, AdamW, NAdam, RAdam, RMSProp; set explicitly because "auto" switches from AdamW to MuSGD above 10,000 iterations
 lr = 0.000833  # initial learning rate (Ultralytics lr0); the value "auto" picks for AdamW with 8 classes, round(0.002 * 5 / (4 + 8), 6)
+lrf = 0.01  # final learning rate as a fraction of lr, in (0, 1] (Ultralytics default 0.01)
+cos_lr = false  # true: cosine decay from lr to lr * lrf; false: linear decay (Ultralytics default false)
+weight_decay = 0.0005  # L2 weight decay, scaled by Ultralytics with the effective batch size over nbs 64 (Ultralytics default 0.0005)
+warmup_epochs = 3.0  # epochs of linear LR and momentum warmup, fractions allowed (Ultralytics default 3.0)
 momentum = 0.9  # AdamW beta1 (SGD momentum for SGD); the value "auto" picks
 warmup_bias_lr = 0.0  # bias learning rate at the start of warmup; "auto" sets 0.0 (Ultralytics default otherwise 0.1)
 close_mosaic = 10  # turn mosaic augmentation off for the last N epochs; 0 keeps it on (Ultralytics default 10)
@@ -15,9 +20,19 @@ scale = 0.5  # scale augmentation gain in [0, 1): train frames are resized by a 
 amp = true  # mixed precision training: true or false (Ultralytics default true)
 seed = 42  # Ultralytics training seed (data order, augmentation, new head weights)
 
+[tiles]
+# Training on overlapping tiles instead of full frames (src/data/yolo_export.py write_yolo_tile_dataset); per-epoch monitoring also uses tiles of the monitoring val frames, while src.predict always predicts full frames at imgsz
+should_tile = false  # true: resize train and monitoring frames to frame_width px wide, cut them into tile_size tiles, and train at imgsz tile_size; false: train on full frames at imgsz
+frame_width = 1920  # width in px every frame is resized to before cutting, keeping its aspect ratio; equal to the inference imgsz, so objects get their inference size
+tile_size = 1088  # tile side in px and the train input size, multiple of 32; a frame side of at most tile_size gives one tile (a 1920 x 1080 frame gives two 1088 x 1080 tiles)
+min_overlap = 256  # minimum overlap of neighbouring tiles in px, below tile_size; objects up to this size are whole in at least one tile
+min_visible_fraction = 0.25  # a box clipped by a tile border is kept if at least this share of its area is inside the tile, in (0, 1]
+should_mask_ignored = false  # true fills the ignored regions of train frames with fill before tiling, except the pixels of labelled boxes; false keeps them unmodified
+fill = [118, 124, 120]  # RGB fill colour, three integers 0 to 255: the train mean colour (01_eda.ipynb section 12.3), as rtdetr [ignored_regions]
+
 [assigner]
 # Task-aligned label assignment (TOOD, https://arxiv.org/abs/2108.07755); set by the training loop, prediction does not read it
-topk = 10  # positive grid points per GT box among those inside it, integer of at least 1 (Ultralytics v8DetectionLoss default 10)
+topk = 10  # positive grid points per GT box among those inside it, integer of at least 1 (Ultralytics v8DetectionLoss default 10); for end-to-end YOLO26 it sets the one-to-many branch only
 
 [inference]
 conf = 0.001  # minimum score of kept detections, in [0, 1]; low so that AP integrates the full precision-recall curve

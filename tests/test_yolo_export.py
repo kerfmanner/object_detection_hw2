@@ -4,6 +4,7 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 import pytest
+from torchvision.io import decode_image
 from ultralytics.data.dataset import YOLODataset
 from ultralytics.data.utils import img2label_paths
 from ultralytics.utils import YAML
@@ -12,8 +13,19 @@ from src.data.annotations import BOX_COLUMNS, AnnotationTables
 from src.data.boxes import convert_xywh_to_yolo
 from src.data.classes import CLASS_NAMES
 from src.data.dataset import load_frame_steps, select_frames
-from src.data.yolo_export import locate_yolo_label, write_yolo_dataset
-from tests.conftest import DATA_CONFIG_PATH, SYNTHETIC_SOURCE_CLIPS, SYNTHETIC_SPLIT_CLIPS
+from src.data.yolo_export import (
+    clip_boxes_to_tile,
+    compute_tile_offsets,
+    locate_yolo_label,
+    write_yolo_dataset,
+    write_yolo_tile_dataset,
+)
+from tests.conftest import (
+    DATA_CONFIG_PATH,
+    SYNTHETIC_IGNORED_BOX,
+    SYNTHETIC_SOURCE_CLIPS,
+    SYNTHETIC_SPLIT_CLIPS,
+)
 from tests.test_splits import SWAPPED_INTO_TRAIN, SWAPPED_INTO_VAL
 
 
@@ -175,3 +187,85 @@ def test_ultralytics_on_adopted_split_writes_nothing_into_data_root(
     }
     assert snapshot_files(data_root) == before
     assert len(list((export_dir / "labels").glob("*.cache"))) == 2
+
+
+SYNTHETIC_FILL_VALUE = 200
+SYNTHETIC_TILES = {
+    "frame_width": 64,
+    "tile_size": 40,
+    "min_overlap": 16,
+    "min_visible_fraction": 0.25,
+    "fill": [SYNTHETIC_FILL_VALUE] * 3,
+}
+
+
+def test_tile_offsets_cover_the_side_with_the_minimum_overlap() -> None:
+    assert compute_tile_offsets(1920, 1088, 256) == [0, 832]
+    assert compute_tile_offsets(1080, 1088, 256) == [0]
+    assert compute_tile_offsets(1088, 1088, 256) == [0]
+    offsets = compute_tile_offsets(3000, 1088, 256)
+    assert offsets[0] == 0 and offsets[-1] == 3000 - 1088
+    assert all(1088 - (b - a) >= 256 for a, b in zip(offsets, offsets[1:]))
+
+
+def test_boxes_are_clipped_to_the_tile_and_slivers_dropped() -> None:
+    boxes = np.array([[10.0, 10.0, 20.0, 30.0], [35.0, 0.0, 45.0, 10.0], [39.0, 0.0, 59.0, 10.0]])
+    kept, tile_boxes = clip_boxes_to_tile(boxes, (0, 0, 40, 40), 0.25)
+    assert kept.tolist() == [0, 1]
+    assert tile_boxes.tolist() == [[10.0, 10.0, 10.0, 20.0], [35.0, 0.0, 5.0, 10.0]]
+    kept, tile_boxes = clip_boxes_to_tile(boxes, (24, 0, 64, 40), 0.25)
+    assert kept.tolist() == [1, 2]
+    assert tile_boxes.tolist() == [[11.0, 0.0, 10.0, 10.0], [15.0, 0.0, 20.0, 10.0]]
+    kept, _ = clip_boxes_to_tile(boxes, (24, 8, 64, 48), 0.25)
+    assert kept.tolist() == []
+
+
+def test_synthetic_tiles_hold_the_resized_frames_and_clipped_labels(
+    synthetic_annotations: AnnotationTables, tmp_path: Path
+) -> None:
+    export_dir = tmp_path / "tiles"
+    data_yaml = YAML.load(
+        write_yolo_tile_dataset(
+            synthetic_annotations, {"train": 1, "val": 1}, export_dir, SYNTHETIC_TILES, {"train"}
+        )
+    )
+    images = synthetic_annotations.images
+    datasets = load_with_ultralytics(data_yaml)
+    for split, dataset in datasets.items():
+        expected_tiles = 0
+        for frame in images.filter(pl.col("split") == split).iter_rows(named=True):
+            height = round(frame["height"] * SYNTHETIC_TILES["frame_width"] / frame["width"])
+            expected_tiles += len(compute_tile_offsets(height, 40, 16)) * 2
+        assert len(dataset.labels) == expected_tiles
+    clip_a = images.filter(pl.col("clip") == "clip_a", pl.col("frame_id") == 1).row(0, named=True)
+    first_tile = export_dir / "images" / "clip_a" / "0000001_0.jpg"
+    assert decode_image(str(first_tile)).shape == (3, 40, 40)
+    objects = synthetic_annotations.objects.filter(
+        pl.col("split") == "train", pl.col("image_id") == clip_a["image_id"]
+    )
+    xywh = objects.select(BOX_COLUMNS).to_numpy().astype(np.float64)
+    is_inside = (xywh[:, 0] + xywh[:, 2] <= 40) & (xywh[:, 1] + xywh[:, 3] <= 40)
+    assert objects["class_id"].to_numpy()[is_inside].tolist() == [0, 1, 2, 3, 4]
+    assert xywh[5].tolist() == [33.0, 22.0, 9.0, 8.0] and xywh[6, 0] == 39.0
+    expected = np.concatenate([xywh[is_inside], [[33.0, 22.0, 7.0, 8.0]]])
+    rows = np.loadtxt(export_dir / "labels" / "clip_a" / "0000001_0.txt", ndmin=2)
+    assert rows[:, 0].tolist() == [0, 1, 2, 3, 4, 5]
+    assert np.abs(rows[:, 1:] - convert_xywh_to_yolo(expected, 40, 40)).max() < 1e-5
+
+
+def test_tiles_fill_ignored_regions_only_in_masked_splits(
+    synthetic_annotations: AnnotationTables, tmp_path: Path
+) -> None:
+    write_yolo_tile_dataset(
+        synthetic_annotations, {"train": 1}, tmp_path / "masked", SYNTHETIC_TILES, {"train"}
+    )
+    write_yolo_tile_dataset(
+        synthetic_annotations, {"train": 1}, tmp_path / "plain", SYNTHETIC_TILES, set()
+    )
+    x, y, w, _ = SYNTHETIC_IGNORED_BOX
+    tile_x, tile_y = x + w - 2 - 24, y + 4
+    frame_value, fill_value = 40, SYNTHETIC_FILL_VALUE
+    for name, is_filled in (("masked", True), ("plain", False)):
+        tile = decode_image(str(tmp_path / name / "images" / "clip_a" / "0000001_1.jpg"))
+        pixel = tile[:, tile_y, tile_x].float().mean().item()
+        assert (abs(pixel - fill_value) < abs(pixel - frame_value)) == is_filled

@@ -9,13 +9,19 @@ from torchvision.io import write_jpeg
 from ultralytics.cfg import get_cfg
 from ultralytics.engine.results import Boxes, Results
 from ultralytics.nn.tasks import DetectionModel
+from ultralytics.utils.loss import E2ELoss
 
 import src.inference.yolo
 from src.data.annotations import AnnotationTables
 from src.data.classes import CLASS_NAMES
 from src.evaluation.coco_metrics import PREDICTION_COLUMNS, validate_predictions
 from src.inference.yolo import convert_yolo_boxes, load_yolo_checkpoint, predict_yolo_frames
-from src.models.yolo import build_yolo, count_assignment_candidates, set_assigner_topk
+from src.models.yolo import (
+    build_yolo,
+    count_assignment_candidates,
+    load_p2_weights,
+    set_assigner_topk,
+)
 from src.training.experiment import load_experiment_config
 from src.training.yolo import check_training_budget
 from tests.conftest import PROJECT_ROOT
@@ -182,6 +188,59 @@ def test_assigner_topk_sets_the_loss_that_training_uses(
         losses[topk], _ = detector.loss(batch)
     assert torch.equal(losses[10], default_loss)
     assert not torch.equal(losses[1], losses[10])
+
+
+def test_assigner_topk_sets_only_the_one_to_many_branch_of_yolo26(
+    smoke_annotations: AnnotationTables,
+) -> None:
+    detector = DetectionModel("yolo26n.yaml", nc=len(CLASS_NAMES), verbose=False)
+    setattr(detector, "args", get_cfg())
+    detector.train()
+    set_assigner_topk(detector, 20)
+    criterion = detector.criterion
+    assert isinstance(criterion, E2ELoss)
+    assert criterion.one2many.assigner.topk == 20
+    assert (criterion.one2one.assigner.topk, criterion.one2one.assigner.topk2) == (7, 1)
+    keys = smoke_annotations.images.filter(pl.col("split") == "train").head(2)
+    objects = smoke_annotations.objects.join(
+        keys.select("split", "image_id"), on=["split", "image_id"]
+    )
+    frames = AnnotationTables(images=keys, objects=objects, ignored=smoke_annotations.ignored)
+    loss, _ = detector.loss(build_yolo_batch(frames))
+    assert torch.isfinite(loss).all()
+
+
+def test_p2_head_adds_a_stride_4_level_and_loads_the_checkpoint_weights(
+    baseline_config: dict,
+) -> None:
+    model = build_yolo(baseline_config | {"arch": "yolo26n", "p2_head": True}).model
+    plain = build_yolo(baseline_config | {"arch": "yolo26n"}).model
+    assert isinstance(model, DetectionModel) and isinstance(plain, DetectionModel)
+    assert model.stride.tolist() == [4.0, 8.0, 16.0, 32.0]
+    assert plain.stride.tolist() == [8.0, 16.0, 32.0]
+    weights, plain_weights = model.state_dict(), plain.state_dict()
+    for key, plain_key in (
+        ("model.0.conv.weight", "model.0.conv.weight"),
+        ("model.23.conv.weight", "model.17.conv.weight"),
+        ("model.28.cv1.conv.weight", "model.22.cv1.conv.weight"),
+        ("model.29.cv2.1.0.conv.weight", "model.23.cv2.0.0.conv.weight"),
+        ("model.29.one2one_cv3.3.2.weight", "model.23.one2one_cv3.2.2.weight"),
+    ):
+        assert torch.equal(weights[key], plain_weights[plain_key])
+    fresh = DetectionModel("yolo26n-p2.yaml", verbose=False)
+    assert load_p2_weights(fresh, plain) == len(plain_weights)
+
+
+def test_small_object_recipe_trains_on_tiles_and_predicts_full_frames(
+    baseline_config: dict,
+) -> None:
+    config = load_experiment_config(YOLO_CONFIG_DIR / "yolo26m_p2_tiles.toml")
+    assert config["run"]["experiment"] == "yolo-yolo26m_p2_tiles"
+    assert set(config) == set(baseline_config)
+    assert config["tiles"] == baseline_config["tiles"] | {"should_tile": True}
+    assert config["imgsz"] == config["tiles"]["frame_width"]
+    assert config["inference"] == baseline_config["inference"]
+    check_training_budget(config)
 
 
 def test_assigner_topk_must_be_a_positive_integer(untrained_detector: DetectionModel) -> None:
