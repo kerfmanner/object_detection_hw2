@@ -255,6 +255,15 @@ def test_short_recipe_changes_only_its_schedule_and_batch_size() -> None:
     check_training_budget(short)
 
 
+def test_large_batch_recipe_changes_only_the_batch_size() -> None:
+    recipe = load_experiment_config(YOLO_CONFIG_DIR / "yolo26m_p2_tiles.toml")
+    large_batch = load_experiment_config(YOLO_CONFIG_DIR / "yolo26m_p2_tiles_b16.toml")
+    assert large_batch["run"]["experiment"] == "yolo-yolo26m_p2_tiles_b16"
+    different = {key for key in large_batch if key != "run" and large_batch[key] != recipe[key]}
+    assert {key: large_batch[key] for key in different} == {"batch_size": 16}
+    check_training_budget(large_batch)
+
+
 def test_assigner_topk_must_be_a_positive_integer(untrained_detector: DetectionModel) -> None:
     for topk in (0, -1):
         with pytest.raises(ValueError, match="TAL topk must be an integer"):

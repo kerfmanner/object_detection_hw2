@@ -1,0 +1,16 @@
+# yolo26m_p2_tiles at batch 16 instead of 3, for a large cloud GPU (Colab G4): the effective batch stays 64 (Ultralytics nbs, 4 accumulated batches instead of 21), so the optimizer steps, LR, and warmup are unchanged, and BatchNorm statistics come from 16 tiles instead of 3
+arch = "yolo26m"  # as yolo26m_p2_tiles
+p2_head = true  # as yolo26m_p2_tiles
+imgsz = 1920  # as yolo26m_p2_tiles
+batch_size = 16  # yolo26m_p2_tiles 3; about 50 GB estimated from 12.4 GB reserved at batch 4 on the RTX 5070
+optimizer = "SGD"  # as yolo26m_p2_tiles
+lr = 0.01  # as yolo26m_p2_tiles
+momentum = 0.937  # as yolo26m_p2_tiles
+lrf = 0.05  # as yolo26m_p2_tiles
+cos_lr = true  # as yolo26m_p2_tiles
+warmup_epochs = 1.0  # as yolo26m_p2_tiles
+warmup_bias_lr = 0.1  # as yolo26m_p2_tiles
+close_mosaic = 5  # as yolo26m_p2_tiles
+
+[tiles]
+should_tile = true  # as yolo26m_p2_tiles
