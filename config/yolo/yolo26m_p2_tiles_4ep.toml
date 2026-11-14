@@ -1,0 +1,17 @@
+# Short run of yolo26m_p2_tiles for a 16 GB cloud GPU (Colab T4): 4 epochs instead of 20 at batch 4, mosaic off for the last epoch, to see how far the recipe gets with a fifth of its schedule
+arch = "yolo26m"  # as yolo26m_p2_tiles
+p2_head = true  # as yolo26m_p2_tiles
+imgsz = 1920  # as yolo26m_p2_tiles
+epochs = 4  # yolo26m_p2_tiles 20; about 50 min per epoch on a T4 (estimate)
+batch_size = 4  # yolo26m_p2_tiles 3; 12.4 GB reserved at batch 4 on the RTX 5070, fits 16 GB; gradients accumulate over 16 batches (effective 64)
+optimizer = "SGD"  # as yolo26m_p2_tiles
+lr = 0.01  # as yolo26m_p2_tiles
+momentum = 0.937  # as yolo26m_p2_tiles
+lrf = 0.05  # as yolo26m_p2_tiles
+cos_lr = true  # as yolo26m_p2_tiles
+warmup_epochs = 1.0  # as yolo26m_p2_tiles
+warmup_bias_lr = 0.1  # as yolo26m_p2_tiles
+close_mosaic = 1  # yolo26m_p2_tiles 5, which would switch mosaic off for the whole 4-epoch run
+
+[tiles]
+should_tile = true  # as yolo26m_p2_tiles

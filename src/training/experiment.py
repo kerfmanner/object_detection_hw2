@@ -13,6 +13,7 @@ CONFIG_FILE = "config.toml"
 TomlValue = str | int | float | bool | list | dict
 REPO_ROOT = Path(__file__).resolve().parents[2]
 KAGGLE_SETTING = "KAGGLE_KERNEL_RUN_TYPE"
+COLAB_SETTING = "COLAB_RELEASE_TAG"
 TRAIN_FRAME_STEPS = ("train_tuning", "train_final")
 TRAIN_SPLIT_CHOICES = (["train"], ["train", "val"])
 
@@ -203,12 +204,14 @@ def read_git_state(repo_dir: Path) -> tuple[str, bool]:
 
 
 def detect_machine() -> str:
-    """Name the machine of a run from the Kaggle notebook environment variable.
+    """Name the machine of a run from the Kaggle and Colab notebook environment variables.
 
     Returns:
-        `kaggle` inside a Kaggle notebook, `pc` otherwise.
+        `kaggle` inside a Kaggle notebook, `colab` inside a Colab runtime, `pc` otherwise.
     """
-    return "kaggle" if config(KAGGLE_SETTING, default="") else "pc"
+    if config(KAGGLE_SETTING, default=""):
+        return "kaggle"
+    return "colab" if config(COLAB_SETTING, default="") else "pc"
 
 
 def read_config_note(config_path: Path) -> str:

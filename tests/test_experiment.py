@@ -7,6 +7,7 @@ import pytest
 
 from src.models.registry import build_model
 from src.training.experiment import (
+    COLAB_SETTING,
     KAGGLE_SETTING,
     create_run_dir,
     describe_run,
@@ -159,9 +160,16 @@ def test_git_state_reports_the_commit_and_uncommitted_changes(tmp_path: Path) ->
 
 def test_machine_is_kaggle_only_inside_a_kaggle_notebook(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv(KAGGLE_SETTING, raising=False)
+    monkeypatch.delenv(COLAB_SETTING, raising=False)
     assert detect_machine() == "pc"
     monkeypatch.setenv(KAGGLE_SETTING, "Batch")
     assert detect_machine() == "kaggle"
+
+
+def test_machine_is_colab_inside_a_colab_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(KAGGLE_SETTING, raising=False)
+    monkeypatch.setenv(COLAB_SETTING, "release-colab_20261110-060000_RC00")
+    assert detect_machine() == "colab"
 
 
 def test_notes_come_from_the_first_line_comment(family_dir: Path) -> None:
