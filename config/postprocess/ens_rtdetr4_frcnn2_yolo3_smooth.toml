@@ -1,0 +1,13 @@
+# ens_rtdetr4_frcnn2_yolo2_smooth (D) plus yolo-yolo26m_p2_tiles_b16 as a ninth member, chosen by forward selection on val predictions: 0.3887 mAP against 0.3859, both val folds higher (0.3896 and 0.3272 against 0.3882 and 0.3215, laptop grid); weight 2 for it gave 0.3888, adding rtdetr-recipe_step2_b16 as well gave 0.3879, and replacing the two YOLO11 members with it gave 0.3829
+members = ["rtdetr-augment_recipe", "rtdetr-infer_recipe_hflip", "rtdetr-infer_recipe_step2_det500", "rtdetr-recipe_step2_repeat-s7", "faster_rcnn-giou_loss", "faster_rcnn-lr_cosine", "yolo-baseline", "yolo-imgsz_1280", "yolo-yolo26m_p2_tiles_b16"]  # four RT-DETR, two Faster R-CNN, three YOLO members
+weights = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]  # equal weights, as ens_rtdetr4_frcnn2_yolo2_smooth
+fusion = "wbf"  # as ens_rtdetr4_frcnn2_yolo2_smooth
+iou_thresh = 0.65  # as ens_rtdetr4_frcnn2_yolo2_smooth
+
+[temporal]
+enabled = true  # as ens_rtdetr4_frcnn2_yolo2_smooth
+link_iou = 0.5  # as ens_rtdetr4_frcnn2_yolo2_smooth
+min_score = 0.0  # as ens_rtdetr4_frcnn2_yolo2_smooth
+weight = 0.5  # as ens_rtdetr4_frcnn2_yolo2_smooth
+statistic = "max"  # as ens_rtdetr4_frcnn2_yolo2_smooth
+should_smooth_boxes = true  # as ens_rtdetr4_frcnn2_yolo2_smooth
