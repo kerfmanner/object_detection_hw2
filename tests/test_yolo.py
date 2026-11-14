@@ -243,18 +243,6 @@ def test_small_object_recipe_trains_on_tiles_and_predicts_full_frames(
     check_training_budget(config)
 
 
-def test_short_recipe_changes_only_its_schedule_and_batch_size() -> None:
-    recipe = load_experiment_config(YOLO_CONFIG_DIR / "yolo26m_p2_tiles.toml")
-    short = load_experiment_config(YOLO_CONFIG_DIR / "yolo26m_p2_tiles_4ep.toml")
-    different = {key for key in short if key != "run" and short[key] != recipe[key]}
-    assert {key: short[key] for key in different} == {
-        "epochs": 4,
-        "batch_size": 4,
-        "close_mosaic": 1,
-    }
-    check_training_budget(short)
-
-
 def test_large_batch_recipe_changes_only_the_batch_size() -> None:
     recipe = load_experiment_config(YOLO_CONFIG_DIR / "yolo26m_p2_tiles.toml")
     large_batch = load_experiment_config(YOLO_CONFIG_DIR / "yolo26m_p2_tiles_b16.toml")

@@ -1,5 +1,0 @@
-# Test-time augmentation of yolo-yolo26m_p2_tiles: WBF of its predictions at imgsz 1920, at 2304, and on flipped frames, at the WBF reference defaults (equal weights, IoU 0.55); untuned, since the members do not exist before this queue
-members = ["yolo-yolo26m_p2_tiles", "yolo-infer_yolo26m_p2_tiles_size2304", "yolo-infer_yolo26m_p2_tiles_hflip"]  # one checkpoint at two scales and flipped
-weights = [1.0, 1.0, 1.0]  # equal weights: three views of one model
-fusion = "wbf"  # Weighted Boxes Fusion (https://arxiv.org/abs/1910.13302)
-iou_thresh = 0.55  # reference implementation default

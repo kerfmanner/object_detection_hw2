@@ -463,3 +463,59 @@ Dropped: no variant reaches D, and fold B (with `uav0000182`, the clip with the 
 
 `faster_rcnn/giou_recipe` (built, to run after the folds): `giou_loss` with the augmentation of `rtdetr-augment_recipe` (flip, photometric, multi-scale 832 to 1216 px, clean last epoch), 4 epochs, batch 2 with gradient accumulation 2 (effective 4, frozen BatchNorm) because 1216 px at batch 4 would reach about 12 GB. Keep if its val mAP beats `giou_loss` (0.3066) by more than 0.0094 and swapping it into D raises both val folds; about 1 GPU hour.
 
+
+## 13. YOLO26m-P2 and the final ensemble F (2026-11-14)
+
+### 13.1 Runs on the Colab G4 (rows in `experiments/results.csv`, machine `colab`)
+
+A Colab G4 (96 GB) became available after the families were tuned. GPU hours of these runs are G4 hours and not comparable with PC hours; ms/image was measured on the PC.
+
+| Experiment | Against | mAP | AP_small | mAP ≤ 1920 px | Best epoch | Public LB | Reading |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `yolo-yolo26m_p2_tiles_b16` | `yolo-baseline` 0.2671 | 0.3064 | 0.1051 | 0.2751 | 11 of 20 | 0.2969 | one combined change (YOLO26m, P2 head, 1088 px tiles of frames resized to 1920 px, SGD cosine, batch 16); monitoring mAP falls after epoch 11 while the val class loss rises |
+| `yolo-yolo26m_p2_tiles_b16_step2` | `yolo26m_p2_tiles_b16` | 0.2796 | 0.0911 | 0.2502 | 2 of 8 | | frames at step 2 for 8 epochs, the same tiles seen: −0.027, overfits within 2 epochs; hypothesis of more distinct frames rejected |
+| `rtdetr-recipe_step2_b16` | `rtdetr-recipe_step2` 0.3402 | 0.3398 | 0.1357 | 0.3111 | 2 of 6 | 0.2760 | effective batch 16, the batch of the official LR: no gain on val (LB +0.004 against `infer_recipe_step2_det500`, within noise) |
+
+The same YOLO26m-P2 recipe at batch 3 on the PC (`config/yolo/yolo26m_p2_tiles.toml`) did not complete: batch 4 and above spilled into system RAM under WSL2.
+
+Inference variants of `yolo26m_p2_tiles_b16` (PC): `imgsz` 2304 0.3058 (AP_small 0.1142), flipped frames 0.3059, NMS IoU 0.65 0.3080; their WBF with the 1920 px pass (`ens_yolo26m_p2_tiles_b16_tta`, IoU 0.55) 0.3244, +0.018, LB 0.3029.
+
+### 13.2 Forward selection from D (laptop, saved val predictions, settings of D)
+
+| Members | mAP | Fold A | Fold B | Public LB |
+| --- | --- | --- | --- | --- |
+| D (`ens_rtdetr4_frcnn2_yolo2_smooth`) | 0.3859 | 0.3882 | 0.3215 | 0.2981 |
+| E = D + `yolo26m_p2_tiles_b16` (`ens_rtdetr4_frcnn2_yolo3_smooth`) | 0.3887 | 0.3896 | 0.3272 | 0.3235 |
+| F = E + `infer_yolo26m_p2_tiles_b16_size2304` (`ens_rtdetr4_frcnn2_yolo4_smooth`) | 0.3905 | 0.3911 | 0.3291 | 0.3397 |
+
+Rejected on D: `rtdetr-recipe_step2_b16` (0.3849, fold B 0.3125), both new members (0.3879), weight 2 for YOLO26m-P2 (0.3888), YOLO26m-P2 in place of the two YOLO11s members (0.3829). Rejected on E: the flip member (0.3901), 2304 px and flip together (0.3903), the TTA fusion as one member (0.3903) or in place of the 1920 px member (0.3904), NMS IoU 0.65 in place of it (0.3884).
+
+Each step is below the seed noise on val (0.0094), while the LB rose by 0.042 from D to F. The YOLO26m-P2 runs have the smallest val to LB gap of all submissions (0.010 single, 0.022 TTA, against 0.06 to 0.09 for the others). Hypothesis, not tested: tiles of frames resized to 1920 px train at the object scale of the test frames, all of which are at most 1920 px wide.
+
+### 13.3 Ablation of F (laptop, saved val predictions)
+
+| Change | mAP | Fold A | Fold B |
+| --- | --- | --- | --- |
+| F | 0.3905 | 0.3911 | 0.3291 |
+| − both Faster R-CNN members | 0.3864 | 0.3869 | 0.3250 |
+| − `yolo-baseline` | 0.3878 | 0.3895 | 0.3244 |
+| − `infer_recipe_step2_det500` | 0.3889 | 0.3898 | 0.3262 |
+| − `faster_rcnn-lr_cosine` | 0.3889 | 0.3894 | 0.3289 |
+| − `infer_recipe_hflip` | 0.3892 | 0.3893 | 0.3256 |
+| − `yolo-imgsz_1280` | 0.3895 | 0.3904 | 0.3300 |
+| − `faster_rcnn-giou_loss` | 0.3899 | 0.3902 | 0.3270 |
+| − `augment_recipe` | 0.3900 | 0.3904 | 0.3271 |
+| − `recipe_step2_repeat-s7` | 0.3903 | 0.3900 | 0.3320 |
+| − `yolo26m_p2_tiles_b16` | 0.3907 | 0.3920 | 0.3285 |
+| + `infer_recipe_step2_size1152` | 0.3909 | 0.3922 | 0.3271 |
+| + `infer_recipe_size1152` | 0.3910 | 0.3925 | 0.3278 |
+| + `infer_recipe_step2_low_res_det500` | 0.3906 | 0.3924 | 0.3303 |
+| + `denoising_groups` | 0.3905 | 0.3914 | 0.3259 |
+| + `faster_rcnn-giou_recipe` | 0.3894 | 0.3901 | 0.3280 |
+| + `rtdetr-ema` | 0.3893 | 0.3917 | 0.3247 |
+
+Only the Faster R-CNN pair matters beyond 0.002; the single change that raises both folds (`low_res_det500`, +0.0001) was not added. F is final; the family ablation is recomputed in `06_final_pipeline.ipynb` §5.2.
+
+### 13.4 Final selection
+
+Fixed on val before the LB score of F: **F** (best validated pipeline) and **D** (F without the two YOLO26m-P2 members, which come from one late run on another machine). This replaces D and D′ (§12.7), chosen before F existed; no train and val version of YOLO26m-P2 was trained.

@@ -1,3 +1,0 @@
-# Inference only, on yolo-yolo26m_p2_tiles: imgsz 2304 instead of the 1920 it was tiled for, objects 1.2 times larger, as the second scale of a multi-scale fusion
-source = "yolo-yolo26m_p2_tiles"  # trained run whose best.pt predicts
-imgsz = 2304  # yolo26m_p2_tiles 1920; longer frame side at inference in px

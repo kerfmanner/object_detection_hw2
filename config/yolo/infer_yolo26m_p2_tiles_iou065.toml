@@ -1,5 +1,0 @@
-# Inference only, on yolo-yolo26m_p2_tiles: NMS IoU 0.65 instead of 0.5, so that overlapping objects of one class (riders on bicycles and motors, dense crowds; 3.4% of train objects overlap another at IoU above 0.5) suppress each other less
-source = "yolo-yolo26m_p2_tiles"  # trained run whose best.pt predicts
-
-[inference]
-iou = 0.65  # baseline 0.5; at least 0.5 and per-class as required
