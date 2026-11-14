@@ -1,0 +1,13 @@
+# recipe_step2 at effective batch 16, the official RT-DETRv2 batch for which the recipe LR (1e-4, backbone 1e-5) was set, instead of 4, which the 12 GB of the PC forced; for a large cloud GPU (Colab G4); warmup kept at 8,000 frames and more epochs, because one epoch has 4 times fewer optimizer steps
+train_frames = "train_final"  # as recipe_step2
+epochs = 6  # recipe_step2 3; its runs peaked after 10,000 to 12,400 frames at batch 4 (about 1 epoch at step 2), so the peak can come several epochs later with 765 instead of 3,060 optimizer steps per epoch; best.pt is chosen by monitoring as before
+batch_size = 8  # baseline 2; about 37 GB estimated from 7.1 GB at batch 2 and the largest train scale 1216 px, half of a 96 GB GPU
+grad_accum = 2  # as baseline; effective batch size 8 * 2 = 16
+num_workers = 8  # baseline 4; 4 times more frames per optimizer step to decode and augment
+warmup_iters = 500  # baseline 2000; the same 8,000 warmup frames as every earlier run (2,000 steps at effective batch 4)
+
+[augment]
+hflip = true  # as recipe_step2
+photometric = true  # as recipe_step2
+train_scales = [832, 896, 960, 1024, 1024, 1024, 1088, 1152, 1216]  # as recipe_step2
+clean_epochs = 1  # as recipe_step2: the last epoch, here 6 of 6, trains on unmodified frames at 1024 px

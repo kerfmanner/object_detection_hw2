@@ -375,6 +375,24 @@ def test_recipe_step2_low_res_differs_from_recipe_step2_only_in_the_low_resoluti
     check_training_budget(low_res)
 
 
+def test_recipe_step2_b16_changes_only_the_batch_and_the_steps_that_depend_on_it() -> None:
+    recipe = load_experiment_config(RTDETR_DIR / "recipe_step2.toml")
+    large_batch = load_experiment_config(RTDETR_DIR / "recipe_step2_b16.toml")
+    assert large_batch["run"]["experiment"] == "rtdetr-recipe_step2_b16"
+    different = {k for k in large_batch if k != "run" and large_batch[k] != recipe[k]}
+    assert {k: large_batch[k] for k in different} == {
+        "epochs": 6,
+        "batch_size": 8,
+        "num_workers": 8,
+        "warmup_iters": 500,
+    }
+    effective = large_batch["batch_size"] * large_batch["grad_accum"]
+    assert effective == 16
+    assert large_batch["warmup_iters"] * effective == recipe["warmup_iters"] * 4
+    assert (large_batch["lr"], large_batch["backbone_lr"]) == (recipe["lr"], recipe["backbone_lr"])
+    check_training_budget(large_batch)
+
+
 def test_shrunk_frames_are_predicted_and_their_boxes_scaled_back(
     baseline_config: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
