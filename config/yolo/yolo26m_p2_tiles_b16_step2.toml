@@ -1,0 +1,18 @@
+# yolo26m_p2_tiles_b16 on train frames at step 2 instead of 5 (2.5 times more distinct frames) for 8 epochs instead of 20, so the number of tiles seen and the GPU time stay about the same; hypothesis: monitoring mAP peaked at epoch 11 of 20 while the val class loss rose, so the model overfits the 4,919 step 5 frames, and more distinct frames help more than more epochs
+arch = "yolo26m"  # as yolo26m_p2_tiles_b16
+p2_head = true  # as yolo26m_p2_tiles_b16
+imgsz = 1920  # as yolo26m_p2_tiles_b16
+train_frames = "train_final"  # yolo26m_p2_tiles_b16 train_tuning; step 2, 12,240 frames
+epochs = 8  # yolo26m_p2_tiles_b16 20; 8 x 12,240 frames is about 20 x 4,919
+batch_size = 16  # as yolo26m_p2_tiles_b16
+optimizer = "SGD"  # as yolo26m_p2_tiles_b16
+lr = 0.01  # as yolo26m_p2_tiles_b16
+momentum = 0.937  # as yolo26m_p2_tiles_b16
+lrf = 0.05  # as yolo26m_p2_tiles_b16
+cos_lr = true  # as yolo26m_p2_tiles_b16
+warmup_epochs = 0.4  # yolo26m_p2_tiles_b16 1.0; the same number of warmup steps, since one epoch has 2.5 times more
+warmup_bias_lr = 0.1  # as yolo26m_p2_tiles_b16
+close_mosaic = 2  # yolo26m_p2_tiles_b16 5; the last quarter of training without mosaic, as 5 of 20
+
+[tiles]
+should_tile = true  # as yolo26m_p2_tiles_b16

@@ -264,6 +264,23 @@ def test_large_batch_recipe_changes_only_the_batch_size() -> None:
     check_training_budget(large_batch)
 
 
+def test_step2_recipe_keeps_tiles_seen_and_warmup_steps_of_the_large_batch_recipe() -> None:
+    large_batch = load_experiment_config(YOLO_CONFIG_DIR / "yolo26m_p2_tiles_b16.toml")
+    step2 = load_experiment_config(YOLO_CONFIG_DIR / "yolo26m_p2_tiles_b16_step2.toml")
+    different = {key for key in step2 if key != "run" and step2[key] != large_batch[key]}
+    assert {key: step2[key] for key in different} == {
+        "train_frames": "train_final",
+        "epochs": 8,
+        "warmup_epochs": 0.4,
+        "close_mosaic": 2,
+    }
+    assert step2["warmup_epochs"] * 5 / 2 == pytest.approx(large_batch["warmup_epochs"])
+    assert step2["close_mosaic"] / step2["epochs"] == pytest.approx(
+        large_batch["close_mosaic"] / large_batch["epochs"]
+    )
+    check_training_budget(step2)
+
+
 def test_assigner_topk_must_be_a_positive_integer(untrained_detector: DetectionModel) -> None:
     for topk in (0, -1):
         with pytest.raises(ValueError, match="TAL topk must be an integer"):
